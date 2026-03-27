@@ -64,7 +64,10 @@ def main():
     # Show initial effect label
     renderer.set_effect(6)
 
+    last_error_time = 0.0
+
     while running:
+      try:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -169,6 +172,12 @@ def main():
             renderer.render()
         pygame.display.flip()
         clock.tick(config.TARGET_FPS)
+
+      except Exception as e:
+        now = time.monotonic()
+        if now - last_error_time > 5.0:
+            print(f"Main loop error: {e}")
+            last_error_time = now
 
     lidar.close()
     audio.close()

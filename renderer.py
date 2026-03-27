@@ -94,10 +94,16 @@ class Renderer:
             [(self.label_vbo, "2f 2f", "in_position", "in_uv")],
         )
 
-        # Load fossil photograph
+        # Load fossil photograph — letterbox to preserve aspect ratio
         asset_path = os.path.join(os.path.dirname(__file__), "assets", "fossil.png")
         img = Image.open(asset_path).convert("RGB")
-        img = img.resize((self.width, self.height), Image.LANCZOS)
+        img.thumbnail((self.width, self.height), Image.LANCZOS)
+        # Center on black background at render resolution
+        canvas = Image.new("RGB", (self.width, self.height), (0, 0, 0))
+        paste_x = (self.width - img.width) // 2
+        paste_y = (self.height - img.height) // 2
+        canvas.paste(img, (paste_x, paste_y))
+        img = canvas
         img = img.transpose(Image.FLIP_TOP_BOTTOM)
         self.fossil_tex = ctx.texture(
             (self.width, self.height), 3, img.tobytes()

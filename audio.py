@@ -51,20 +51,26 @@ class AudioEngine:
             print(f"Audio: loaded {loaded} clips "
                   f"({len(self._clips_a)} heavy, {len(self._clips_b)} light)")
 
-        self._stream = sd.OutputStream(
-            samplerate=config.AUDIO_SAMPLE_RATE,
-            channels=2,
-            dtype='float32',
-            callback=self._audio_callback,
-            device=config.AUDIO_DEVICE,
-            blocksize=1024,
-        )
-        self._stream.start()
-        self._last_activity_time = time.monotonic()
-        print("Audio: stream started")
+        try:
+            self._stream = sd.OutputStream(
+                samplerate=config.AUDIO_SAMPLE_RATE,
+                channels=2,
+                dtype='float32',
+                callback=self._audio_callback,
+                device=config.AUDIO_DEVICE,
+                blocksize=1024,
+            )
+            self._stream.start()
+            self._last_activity_time = time.monotonic()
+            print("Audio: stream started")
+        except Exception as e:
+            print(f"Audio: failed to open stream ({e}), will retry")
+            self._stream = None
 
     def trigger(self, x_mm: float, depth_mm: float):
         """Trigger a footstep sound at the given spatial position."""
+        if self._stream is None:
+            return
         now = time.monotonic()
 
         # Rate limit check 1: minimum interval
@@ -120,6 +126,9 @@ class AudioEngine:
         stereo = np.column_stack([clip * gain_l * vol, clip * gain_r * vol])
 
         with self._lock:
+            # Cap max simultaneous voices to prevent memory growth
+            if len(self._voices) >= 16:
+                self._voices.pop(0)
             self._voices.append({'data': stereo, 'pos': 0})
 
         self._last_event_time = now
@@ -132,7 +141,29 @@ class AudioEngine:
             self._target_vol = 1.0
 
     def update(self):
-        """Call every frame. Handles idle fade-out and resume."""
+        """Call every frame. Handles idle fade-out, resume, and stream recovery."""
+        # Try to open stream if not yet open
+        if self._stream is None:
+            if not hasattr(self, '_last_stream_retry'):
+                self._last_stream_retry = 0.0
+            now = time.monotonic()
+            if now - self._last_stream_retry >= 5.0:
+                self._last_stream_retry = now
+                try:
+                    self._stream = sd.OutputStream(
+                        samplerate=config.AUDIO_SAMPLE_RATE,
+                        channels=2,
+                        dtype='float32',
+                        callback=self._audio_callback,
+                        device=config.AUDIO_DEVICE,
+                        blocksize=1024,
+                    )
+                    self._stream.start()
+                    print("Audio: stream started")
+                except Exception:
+                    self._stream = None
+            return
+
         now = time.monotonic()
         elapsed_since_activity = now - self._last_activity_time
 

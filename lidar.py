@@ -36,6 +36,7 @@ SCAN_CMD = 0x20
 STOP_CMD = 0x25
 RESET_CMD = 0x40
 DESCRIPTOR_LEN = 7
+RECONNECT_INTERVAL = 5.0
 
 
 class LidarTracker:
@@ -48,48 +49,79 @@ class LidarTracker:
         self._lock = threading.Lock()
         self._clusters: dict[int, ClusterState] = {}
         self._next_cluster_id = 0
+        self._connected = False
 
     def setup(self):
         """Connect to RPLIDAR and calibrate. Soft-fails if unavailable."""
+        if self._connect():
+            self.calibrate()
+
+        # Always start the scan thread — it handles reconnection
+        self._running = True
+        self._thread = threading.Thread(target=self._scan_loop, daemon=True)
+        self._thread.start()
+
+    def _connect(self):
+        """Attempt to open serial port and reset device. Returns True on success."""
+        self._disconnect()
         try:
             self._serial_port = serial.Serial(
                 config.LIDAR_PORT,
                 baudrate=config.LIDAR_BAUD,
                 timeout=1.0,
             )
-            # Stop any ongoing scan and reset
             self._send_cmd(STOP_CMD)
             time.sleep(0.1)
             self._serial_port.reset_input_buffer()
             self._send_cmd(RESET_CMD)
             time.sleep(1.0)
             self._serial_port.reset_input_buffer()
+            self._connected = True
             print("LiDAR: connected")
+            return True
         except Exception as e:
-            print(f"LiDAR: not available ({e}), running without footstep detection")
+            print(f"LiDAR: not available ({e})")
             self._serial_port = None
-            return
+            self._connected = False
+            return False
 
-        self.calibrate()
-
-        self._running = True
-        self._thread = threading.Thread(target=self._scan_loop, daemon=True)
-        self._thread.start()
+    def _disconnect(self):
+        """Close serial port if open."""
+        if self._serial_port:
+            try:
+                self._send_cmd(STOP_CMD)
+                time.sleep(0.1)
+                self._serial_port.close()
+            except Exception:
+                pass
+            self._serial_port = None
+        self._connected = False
 
     def calibrate(self):
-        """Capture background scan (room must be empty). Stops scan thread first."""
+        """Capture background scan (room must be empty). Called from main thread."""
         if self._serial_port is None:
             return
 
         # Stop scan thread if running
-        if self._running:
+        if self._running and self._thread:
             self._running = False
             self._thread.join(timeout=2.0)
             self._thread = None
 
+        self._calibrate_internal()
+
+        # Restart scan thread
+        self._running = True
+        self._thread = threading.Thread(target=self._scan_loop, daemon=True)
+        self._thread.start()
+
+    def _calibrate_internal(self):
+        """Calibrate without managing threads. Safe to call from scan thread."""
+        if self._serial_port is None:
+            return
+
         print("LiDAR: calibrating background...")
 
-        # Start scan
         self._send_cmd(STOP_CMD)
         time.sleep(0.1)
         self._serial_port.reset_input_buffer()
@@ -107,12 +139,10 @@ class LidarTracker:
             if len(frames) >= config.LIDAR_BG_FRAMES:
                 break
 
-        # Stop scan for now (scan_loop will restart it)
         self._send_cmd(STOP_CMD)
         time.sleep(0.1)
         self._serial_port.reset_input_buffer()
 
-        # Compute median distance per angle bin (1° bins)
         bins = np.full(360, np.nan)
         for angle_bin in range(360):
             values = []
@@ -125,11 +155,6 @@ class LidarTracker:
         self._background = bins
         self._clusters.clear()
         print("LiDAR: background learned")
-
-        # Restart scan thread
-        self._running = True
-        self._thread = threading.Thread(target=self._scan_loop, daemon=True)
-        self._thread.start()
 
     def get_step_events(self) -> list[StepEvent]:
         """Drain and return pending step events (thread-safe)."""
@@ -158,14 +183,8 @@ class LidarTracker:
         self._running = False
         if self._thread:
             self._thread.join(timeout=2.0)
-        if self._serial_port:
-            try:
-                self._send_cmd(STOP_CMD)
-                time.sleep(0.1)
-                self._serial_port.close()
-            except Exception:
-                pass
-            print("LiDAR: stopped")
+        self._disconnect()
+        print("LiDAR: stopped")
 
     # ── Serial protocol ──────────────────────────────────────────────────
 
@@ -232,15 +251,30 @@ class LidarTracker:
         return (x, y)
 
     def _scan_loop(self):
-        """Background thread: scan, detect foreground, track clusters."""
-        try:
-            self._start_scan()
-            for scan in self._iter_scans_internal():
+        """Background thread: scan, detect foreground, track clusters. Auto-reconnects."""
+        while self._running:
+            if not self._connected:
+                time.sleep(RECONNECT_INTERVAL)
                 if not self._running:
                     break
-                self._process_scan(scan)
-        except Exception as e:
-            print(f"LiDAR scan error: {e}")
+                if self._connect():
+                    try:
+                        self._calibrate_internal()
+                    except Exception as e:
+                        print(f"LiDAR: calibration failed ({e}), will retry...")
+                        self._disconnect()
+                        continue
+                continue
+
+            try:
+                self._start_scan()
+                for scan in self._iter_scans_internal():
+                    if not self._running:
+                        return
+                    self._process_scan(scan)
+            except Exception as e:
+                print(f"LiDAR: error ({e}), will reconnect...")
+                self._disconnect()
 
     def _process_scan(self, scan):
         """Process one scan: background subtract, cluster, track steps."""

@@ -1,6 +1,10 @@
+import time
+
 import numpy as np
 import cv2
 import config
+
+RECONNECT_INTERVAL = 5.0  # seconds between reconnect attempts
 
 
 class KinectCapture:
@@ -19,6 +23,8 @@ class KinectCapture:
         self._bg_frames_collected = 0
         self._bg_frames_needed = 30  # Collect 1 second of frames for background
         self._bg_threshold_mm = 150  # Person must be this much closer than background
+        self._last_reconnect = 0.0
+        self._consecutive_errors = 0
         self._try_open()
 
     def _try_open(self):
@@ -65,7 +71,14 @@ class KinectCapture:
         return self._background is None and self._device is not None
 
     def capture(self):
-        if not self._enabled or self._device is None:
+        if not self._enabled:
+            return self._last_mask
+
+        if self._device is None:
+            now = time.monotonic()
+            if now - self._last_reconnect >= RECONNECT_INTERVAL:
+                self._last_reconnect = now
+                self._try_open()
             return self._last_mask
 
         try:
@@ -161,10 +174,23 @@ class KinectCapture:
             )
 
             self._last_mask = result
+            self._consecutive_errors = 0
             return result
 
         except Exception as e:
-            print(f"Kinect capture error: {e}")
+            self._consecutive_errors += 1
+            if self._consecutive_errors <= 3:
+                print(f"Kinect capture error: {e}")
+            if self._consecutive_errors >= 10:
+                print("Kinect: too many errors, marking as disconnected")
+                try:
+                    self._device.stop()
+                except Exception:
+                    pass
+                self._device = None
+                self._background = None
+                self._bg_frames_collected = 0
+                self._consecutive_errors = 0
             return self._last_mask
 
     def calibrate(self):
@@ -219,5 +245,8 @@ class KinectCapture:
 
     def close(self):
         if self._device is not None:
-            self._device.stop()
+            try:
+                self._device.stop()
+            except Exception:
+                pass
             print("Kinect: stopped")
