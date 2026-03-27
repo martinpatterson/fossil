@@ -16,8 +16,7 @@ import config
 
 class AudioEngine:
     def __init__(self):
-        self._clips_a = []     # Group A (heavier crush) — list of stereo arrays
-        self._clips_b = []     # Group B (lighter sounds)
+        self._clips = []       # All loaded audio clips
         self._voices = []      # Active playback voices
         self._master_vol = 1.0
         self._target_vol = 1.0
@@ -33,23 +32,23 @@ class AudioEngine:
         self._is_idle = False
 
     def setup(self):
-        """Load audio clips and open stereo output stream."""
+        """Load all audio clips from assets directory and open stereo output stream."""
         clip_dir = config.AUDIO_CLIP_DIR
-        self._clips_a = [self._load_clip(os.path.join(clip_dir, f))
-                         for f in config.AUDIO_GROUP_A]
-        self._clips_b = [self._load_clip(os.path.join(clip_dir, f))
-                         for f in config.AUDIO_GROUP_B]
+        audio_exts = ('.wav', '.aiff', '.aif', '.mp3', '.flac', '.ogg')
 
-        # Remove any that failed to load
-        self._clips_a = [c for c in self._clips_a if c is not None]
-        self._clips_b = [c for c in self._clips_b if c is not None]
+        # Scan directory for audio files
+        self._clips = []
+        if os.path.isdir(clip_dir):
+            for f in sorted(os.listdir(clip_dir)):
+                if f.lower().endswith(audio_exts):
+                    clip = self._load_clip(os.path.join(clip_dir, f))
+                    if clip is not None:
+                        self._clips.append(clip)
 
-        loaded = len(self._clips_a) + len(self._clips_b)
-        if loaded == 0:
+        if not self._clips:
             print("Audio: WARNING — no clips loaded, audio will be silent")
         else:
-            print(f"Audio: loaded {loaded} clips "
-                  f"({len(self._clips_a)} heavy, {len(self._clips_b)} light)")
+            print(f"Audio: loaded {len(self._clips)} clips from {clip_dir}")
 
         try:
             self._stream = sd.OutputStream(
@@ -84,17 +83,10 @@ class AudioEngine:
         if len(self._event_times) >= config.AUDIO_MAX_EVENTS_PER_SEC:
             return
 
-        # Select clip (weighted random)
-        if not self._clips_a and not self._clips_b:
+        # Select clip (random)
+        if not self._clips:
             return
-        if random.random() < config.AUDIO_GROUP_A_WEIGHT and self._clips_a:
-            clip = random.choice(self._clips_a).copy()
-        elif self._clips_b:
-            clip = random.choice(self._clips_b).copy()
-        elif self._clips_a:
-            clip = random.choice(self._clips_a).copy()
-        else:
-            return
+        clip = random.choice(self._clips).copy()
 
         # Pitch shift via resampling
         variance = config.AUDIO_PITCH_VARIANCE
