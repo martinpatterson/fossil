@@ -5,6 +5,7 @@ import cv2
 import config
 
 RECONNECT_INTERVAL = 5.0  # seconds between reconnect attempts
+FATAL_ERROR_THRESHOLD = 10  # consecutive errors before requesting restart
 
 
 class KinectCapture:
@@ -25,6 +26,7 @@ class KinectCapture:
         self._bg_threshold_mm = 150  # Person must be this much closer than background
         self._last_reconnect = 0.0
         self._consecutive_errors = 0
+        self.needs_restart = False
         self._try_open()
 
     def _try_open(self):
@@ -82,8 +84,12 @@ class KinectCapture:
             return self._last_mask
 
         try:
-            cap = self._device.get_capture()
-            if cap.depth is None:
+            cap = self._device.get_capture(timeout=1000)  # 1s timeout
+            if cap is None or cap.depth is None:
+                self._consecutive_errors += 1
+                if self._consecutive_errors >= FATAL_ERROR_THRESHOLD:
+                    print("Kinect: lost device, requesting restart")
+                    self.needs_restart = True
                 return self._last_mask
 
             depth = cap.depth.astype(np.float32)
@@ -181,16 +187,9 @@ class KinectCapture:
             self._consecutive_errors += 1
             if self._consecutive_errors <= 3:
                 print(f"Kinect capture error: {e}")
-            if self._consecutive_errors >= 10:
-                print("Kinect: too many errors, marking as disconnected")
-                try:
-                    self._device.stop()
-                except Exception:
-                    pass
-                self._device = None
-                self._background = None
-                self._bg_frames_collected = 0
-                self._consecutive_errors = 0
+            if self._consecutive_errors >= FATAL_ERROR_THRESHOLD:
+                print("Kinect: too many errors, requesting restart")
+                self.needs_restart = True
             return self._last_mask
 
     def calibrate(self):

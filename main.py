@@ -64,7 +64,10 @@ def main():
     # Show initial effect label
     renderer.set_effect(6)
 
+    last_error_time = 0.0
+
     while running:
+      try:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -167,13 +170,27 @@ def main():
             renderer.blit_rgb(vis_frame)
         else:
             renderer.render()
+        # Check if sensors need a full process restart
+        if kinect.needs_restart:
+            print("Sensor failure — restarting process...")
+            break
+
         pygame.display.flip()
         clock.tick(config.TARGET_FPS)
 
+      except Exception as e:
+        now = time.monotonic()
+        if now - last_error_time > 5.0:
+            print(f"Main loop error: {e}")
+            last_error_time = now
+
+    restart = kinect.needs_restart
     lidar.close()
     audio.close()
     kinect.close()
     pygame.quit()
+    if restart:
+        sys.exit(75)  # signal wrapper to restart
 
 
 if __name__ == "__main__":
