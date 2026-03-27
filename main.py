@@ -170,6 +170,9 @@ def main():
                 elif event.key == pygame.K_j:
                     config.AUDIO_PAN_RANGE = max(0.0, config.AUDIO_PAN_RANGE - 0.05)
                     print(f"Audio pan range: {config.AUDIO_PAN_RANGE:.2f}")
+                elif event.key == pygame.K_h:
+                    config.AUDIO_PAN_RANGE = min(1.0, config.AUDIO_PAN_RANGE + 0.05)
+                    print(f"Audio pan range: {config.AUDIO_PAN_RANGE:.2f}")
                 elif event.key == pygame.K_k:
                     kinect.enabled = not kinect.enabled
                     print(f"Kinect frozen: {not kinect.enabled}")

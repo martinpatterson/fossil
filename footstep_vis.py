@@ -140,7 +140,7 @@ class FootstepVis:
             ("Velocity  ;/'", f"{config.LIDAR_VELOCITY_MIN_MM}mm"),
             ("Cluster   -/=", f"{config.LIDAR_CLUSTER_MIN_PTS} pts"),
             ("Vol Max   V/X", f"{config.AUDIO_VOL_MAX:.2f}"),
-            ("Pan Range J",   f"{config.AUDIO_PAN_RANGE:.2f}"),
+            ("Pan Range H/J", f"{config.AUDIO_PAN_RANGE:.2f}"),
             ("Fade Rate",     f"{config.FADE_RATE:.4f}"),
             ("Trace Int",     f"{config.TRACE_INTENSITY:.2f}"),
             ("Rate Limit",    f"{config.AUDIO_MIN_INTERVAL_MS}ms / {config.AUDIO_MAX_EVENTS_PER_SEC}/s"),
