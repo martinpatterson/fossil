@@ -133,16 +133,24 @@ class FootstepVis:
         cv2.putText(img, "FOOTSTEP DETECTION", (20, 35),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 200), 2, cv2.LINE_AA)
 
-        # Audio config readout
+        # Live tuning readout
         y_text = 65
-        for label, val in [
-            ("Vol Max", f"{config.AUDIO_VOL_MAX:.2f}"),
-            ("Pan Range", f"{config.AUDIO_PAN_RANGE:.2f}"),
-            ("Rate Limit", f"{config.AUDIO_MIN_INTERVAL_MS}ms / {config.AUDIO_MAX_EVENTS_PER_SEC}/s"),
-        ]:
+        tuning = [
+            ("Threshold ,/.", f"{config.LIDAR_THRESHOLD_MM}mm"),
+            ("Velocity  ;/'", f"{config.LIDAR_VELOCITY_MIN_MM}mm"),
+            ("Cluster   -/=", f"{config.LIDAR_CLUSTER_MIN_PTS} pts"),
+            ("Vol Max   V/X", f"{config.AUDIO_VOL_MAX:.2f}"),
+            ("Pan Range J",   f"{config.AUDIO_PAN_RANGE:.2f}"),
+            ("Fade Rate",     f"{config.FADE_RATE:.4f}"),
+            ("Trace Int",     f"{config.TRACE_INTENSITY:.2f}"),
+            ("Rate Limit",    f"{config.AUDIO_MIN_INTERVAL_MS}ms / {config.AUDIO_MAX_EVENTS_PER_SEC}/s"),
+        ]
+        for label, val in tuning:
             cv2.putText(img, f"{label}: {val}", (20, y_text),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, (140, 140, 140), 1, cv2.LINE_AA)
             y_text += 18
+        cv2.putText(img, "P=print  W=save", (20, y_text + 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (100, 100, 100), 1, cv2.LINE_AA)
 
         # Flip vertically for OpenGL texture upload
         img = cv2.flip(img, 0)
