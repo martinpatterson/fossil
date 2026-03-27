@@ -155,7 +155,7 @@ def main():
         renderer.update_debug(kinect.depth_vis, mask)
 
         # Audio/LiDAR integration — use LiDAR y_mm directly for volume
-        step_events = lidar.get_step_events()
+        step_events = lidar.poll()
         for step in step_events:
             audio.trigger(step.x_mm, step.y_mm)
             footstep_vis.record_trigger(step.x_mm, step.y_mm, step.y_mm)
