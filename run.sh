@@ -1,12 +1,27 @@
 #!/bin/bash
 # Auto-restart wrapper for Fossil installation.
-# Restarts on exit code 75 (sensor failure). Exits on 0 (clean quit).
+# Restarts on exit code 75 (sensor failure). Exits on 0 (clean quit) or Ctrl-C.
 # Preemptive restart every RESTART_HOURS to avoid memory leak degradation.
 cd "$(dirname "$0")"
 source .venv/bin/activate
 
 RESTART_HOURS=24
 RESTART_SECS=$((RESTART_HOURS * 3600))
+CHILD_PID=""
+
+cleanup() {
+    echo ""
+    echo "$(date): Caught interrupt, shutting down..."
+    if [ -n "$CHILD_PID" ] && kill -0 "$CHILD_PID" 2>/dev/null; then
+        kill "$CHILD_PID" 2>/dev/null
+        wait "$CHILD_PID" 2>/dev/null
+    fi
+    pkill -9 -f "python.*main.py" 2>/dev/null
+    echo "$(date): Stopped."
+    exit 0
+}
+
+trap cleanup INT TERM
 
 # Kill any stale fossil processes on startup
 pkill -9 -f "python.*main.py" 2>/dev/null
@@ -14,8 +29,11 @@ sleep 2
 
 while true; do
     echo "$(date): Starting Fossil (will restart after ${RESTART_HOURS}h)..."
-    timeout $RESTART_SECS python main.py
+    timeout $RESTART_SECS python main.py &
+    CHILD_PID=$!
+    wait $CHILD_PID
     EXIT_CODE=$?
+    CHILD_PID=""
 
     # Kill any zombies before restart
     pkill -9 -f "python.*main.py" 2>/dev/null
