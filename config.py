@@ -38,7 +38,7 @@ LIDAR_VELOCITY_MIN_MM   = 20        # min movement to count as a step
 LIDAR_GALLERY_WIDTH_MM  = 4000      # physical gallery width for pan mapping
 
 # ── Audio ──────────────────────────────────────────────────────────────────
-AUDIO_DEVICE            = None      # None = system default stereo out
+AUDIO_DEVICE            = "LG TV"   # substring match for sounddevice
 AUDIO_SAMPLE_RATE       = 44100
 AUDIO_CLIP_DIR          = "assets/audio"
 AUDIO_GROUP_A           = ["fossil_A1_water_bottle_full.wav",
