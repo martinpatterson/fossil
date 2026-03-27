@@ -5,7 +5,7 @@
 cd "$(dirname "$0")"
 source .venv/bin/activate
 
-RESTART_HOURS=6
+RESTART_HOURS=24
 RESTART_SECS=$((RESTART_HOURS * 3600))
 
 # Kill any stale fossil processes on startup
