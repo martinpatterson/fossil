@@ -64,10 +64,7 @@ def main():
     # Show initial effect label
     renderer.set_effect(6)
 
-    last_error_time = 0.0
-
     while running:
-      try:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -155,7 +152,7 @@ def main():
         renderer.update_debug(kinect.depth_vis, mask)
 
         # Audio/LiDAR integration — use LiDAR y_mm directly for volume
-        step_events = lidar.poll()
+        step_events = lidar.get_step_events()
         for step in step_events:
             audio.trigger(step.x_mm, step.y_mm)
             footstep_vis.record_trigger(step.x_mm, step.y_mm, step.y_mm)
@@ -172,12 +169,6 @@ def main():
             renderer.render()
         pygame.display.flip()
         clock.tick(config.TARGET_FPS)
-
-      except Exception as e:
-        now = time.monotonic()
-        if now - last_error_time > 5.0:
-            print(f"Main loop error: {e}")
-            last_error_time = now
 
     lidar.close()
     audio.close()
