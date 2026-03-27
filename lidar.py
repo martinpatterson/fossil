@@ -1,12 +1,13 @@
 """RPLIDAR C1 footstep detector for Fossil installation.
 
-Single-threaded design: main loop calls poll() each frame.
-Auto-detects USB port by vendor ID. Reconnects on failure.
+Single background thread owns all serial I/O. Main thread communicates
+via thread-safe event queue and calibration flag. Auto-detects USB port.
 """
 
 import glob
 import math
 import os
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -21,9 +22,7 @@ SYNC_BYTE = 0xA5
 SCAN_CMD = 0x20
 STOP_CMD = 0x25
 RESET_CMD = 0x40
-DESCRIPTOR_LEN = 7
 RECONNECT_INTERVAL = 10.0
-MAX_BYTES_PER_POLL = 500  # read up to 100 measurements per poll (5 bytes each)
 
 
 @dataclass
@@ -45,172 +44,130 @@ class ClusterState:
 
 class LidarTracker:
     def __init__(self):
-        self._port = None
         self._background = None
         self._clusters: dict[int, ClusterState] = {}
         self._next_cluster_id = 0
         self._event_queue = deque()
-        self._scanning = False
-        self._last_reconnect = 0.0
-        self._partial_scan = []
-
-    # ── Public API (all called from main thread) ─────────────────────────
+        self._lock = threading.Lock()
+        self._running = False
+        self._thread = None
+        self._calibrate_requested = False
 
     def setup(self):
-        """Connect and calibrate. Soft-fails if unavailable."""
-        port_path = self._find_port()
-        if port_path and self._connect(port_path):
-            self._calibrate()
-            self._start_scan()
+        """Start background worker thread."""
+        self._running = True
+        self._calibrate_requested = True
+        self._thread = threading.Thread(target=self._worker, daemon=True)
+        self._thread.start()
 
     def poll(self):
-        """Call every frame. Reads available serial data, processes scans.
-        Returns list of StepEvents since last poll."""
-        if self._port is None:
-            now = time.monotonic()
-            if now - self._last_reconnect >= RECONNECT_INTERVAL:
-                self._last_reconnect = now
-                port_path = self._find_port()
-                if port_path and self._connect(port_path):
-                    self._calibrate()
-                    self._start_scan()
-            return []
-
-        try:
-            return self._read_and_process()
-        except Exception as e:
-            print(f"LiDAR: error ({e}), will reconnect...")
-            self._disconnect()
-            return []
-
-    def calibrate(self):
-        """Recalibrate (called from C key handler). Room must be empty."""
-        if self._port is None:
-            return
-        self._scanning = False
-        try:
-            self._send_cmd(STOP_CMD)
-            time.sleep(2.0)
-            self._port.reset_input_buffer()
-            self._calibrate()
-            self._start_scan()
-        except Exception as e:
-            print(f"LiDAR: recalibration failed ({e})")
-            self._disconnect()
-
-    def get_step_events(self) -> list[StepEvent]:
         """Drain and return pending step events."""
-        events = list(self._event_queue)
-        self._event_queue.clear()
+        with self._lock:
+            events = list(self._event_queue)
+            self._event_queue.clear()
         return events
 
+    def calibrate(self):
+        """Request recalibration (non-blocking)."""
+        self._calibrate_requested = True
+
     def get_debug_state(self):
-        """Return snapshot of clusters and background for visualization."""
-        clusters = {cid: ClusterState(
-            id=cs.id, centroid=cs.centroid, prev_centroid=cs.prev_centroid,
-            state=cs.state, frame_count=cs.frame_count,
-            fired_count=cs.fired_count, absent_count=cs.absent_count,
-        ) for cid, cs in self._clusters.items()}
+        """Snapshot of clusters and background for visualization."""
+        with self._lock:
+            clusters = {cid: ClusterState(
+                id=cs.id, centroid=cs.centroid, prev_centroid=cs.prev_centroid,
+                state=cs.state, frame_count=cs.frame_count,
+                fired_count=cs.fired_count, absent_count=cs.absent_count,
+            ) for cid, cs in self._clusters.items()}
         bg = self._background.copy() if self._background is not None else None
         return clusters, bg
 
     def close(self):
-        """Clean shutdown."""
-        self._disconnect()
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=3.0)
         print("LiDAR: stopped")
 
-    # ── Connection ───────────────────────────────────────────────────────
+    # ── Worker thread ────────────────────────────────────────────────────
 
-    @staticmethod
-    def _find_port():
-        """Find RPLIDAR serial port by USB vendor ID."""
-        for dev in glob.glob("/dev/ttyUSB*"):
-            try:
-                devname = os.path.basename(dev)
-                vid_path = f"/sys/class/tty/{devname}/device/../idVendor"
-                vid_path = os.path.realpath(vid_path)
-                if os.path.exists(vid_path):
-                    vid = open(vid_path).read().strip()
-                    if vid == RPLIDAR_VID:
-                        return dev
-            except Exception:
+    def _worker(self):
+        """Connect → calibrate → scan. Reconnect on any failure."""
+        while self._running:
+            port = self._open_port()
+            if port is None:
+                time.sleep(RECONNECT_INTERVAL)
                 continue
-        # Fallback to config
-        if os.path.exists(config.LIDAR_PORT):
-            return config.LIDAR_PORT
-        return None
 
-    def _connect(self, port_path):
-        """Open serial port and reset device."""
-        self._disconnect()
+            try:
+                # Calibrate on first connect or when requested
+                if self._calibrate_requested:
+                    self._calibrate_requested = False
+                    self._run_calibration(port)
+
+                # Scan continuously
+                self._run_scan(port)
+
+            except Exception as e:
+                print(f"LiDAR: error ({e}), will reconnect...")
+
+            # Cleanup
+            try:
+                port.write(bytes([SYNC_BYTE, STOP_CMD]))
+                time.sleep(0.1)
+                port.close()
+            except Exception:
+                pass
+
+            if self._running:
+                time.sleep(RECONNECT_INTERVAL)
+
+    def _open_port(self):
+        """Find and open RPLIDAR serial port."""
+        port_path = self._find_port()
+        if not port_path:
+            return None
         try:
-            self._port = serial.Serial(port_path, baudrate=config.LIDAR_BAUD, timeout=0.05)
-            self._send_cmd(STOP_CMD)
+            port = serial.Serial(port_path, baudrate=config.LIDAR_BAUD, timeout=3.0)
+            # STOP, wait, flush, RESET, wait, flush — proven sequence
+            port.write(bytes([SYNC_BYTE, STOP_CMD]))
             time.sleep(0.5)
-            self._port.reset_input_buffer()
-            self._send_cmd(RESET_CMD)
+            port.reset_input_buffer()
+            port.write(bytes([SYNC_BYTE, RESET_CMD]))
             time.sleep(2.0)
-            self._port.reset_input_buffer()
+            port.reset_input_buffer()
             print(f"LiDAR: connected on {port_path}")
-            return True
+            return port
         except Exception as e:
             print(f"LiDAR: not available ({e})")
-            self._port = None
-            return False
+            return None
 
-    def _disconnect(self):
-        """Close serial port."""
-        if self._port:
-            try:
-                self._send_cmd(STOP_CMD)
-            except Exception:
-                pass
-            try:
-                self._port.close()
-            except Exception:
-                pass
-            self._port = None
-        self._scanning = False
-
-    # ── Calibration ──────────────────────────────────────────────────────
-
-    def _calibrate(self):
-        """Blocking calibration scan. Collects background with room empty."""
+    def _run_calibration(self, port):
+        """Blocking calibration: start scan, collect background, stop scan."""
         print("LiDAR: calibrating background...")
-        self._send_cmd(STOP_CMD)
-        time.sleep(0.5)
-        self._port.reset_input_buffer()
 
         # Start scan
-        self._send_cmd(SCAN_CMD)
-        desc = self._port.read(DESCRIPTOR_LEN)
-        if len(desc) < DESCRIPTOR_LEN:
-            raise RuntimeError("no response descriptor")
-
-        # Collect scans (blocking reads with longer timeout for calibration)
-        old_timeout = self._port.timeout
-        self._port.timeout = 1.0
+        port.write(bytes([SYNC_BYTE, SCAN_CMD]))
+        desc = port.read(7)
+        if len(desc) < 7:
+            raise RuntimeError("no calibration descriptor")
 
         # Settle
         settle_end = time.monotonic() + config.LIDAR_BG_SETTLE_SEC
-        for scan in self._iter_scans_blocking():
+        for scan in self._read_scans(port):
             if time.monotonic() >= settle_end:
                 break
 
+        # Collect frames
         frames = []
-        for scan in self._iter_scans_blocking():
+        for scan in self._read_scans(port):
             frames.append(self._scan_to_polar(scan))
             if len(frames) >= config.LIDAR_BG_FRAMES:
                 break
 
-        self._port.timeout = old_timeout
+        # Keep motor running — don't stop, don't flush.
+        # _run_scan will pick up from wherever the stream is.
 
-        # Stop scan
-        self._send_cmd(STOP_CMD)
-        time.sleep(0.5)
-        self._port.reset_input_buffer()
-
-        # Build background
+        # Compute background
         bins = np.full(360, np.nan)
         for angle_bin in range(360):
             values = [f[angle_bin] for f in frames if angle_bin in f]
@@ -218,78 +175,90 @@ class LidarTracker:
                 bins[angle_bin] = np.median(values)
 
         self._background = bins
-        self._clusters.clear()
-        self._partial_scan = []
+        with self._lock:
+            self._clusters.clear()
+        self._next_cluster_id = 0
         print("LiDAR: background learned")
 
-    def _iter_scans_blocking(self):
-        """Yield complete scans (blocking reads, for calibration only)."""
+    def _run_scan(self, port):
+        """Continuous scanning. Blocks until error or calibration requested.
+        Motor and scan already running from calibration — just keep reading."""
         scan = []
-        while True:
-            raw = self._port.read(5)
-            if len(raw) < 5:
-                continue
-            b0, b1, b2, b3, b4 = raw
-            new_scan = bool(b0 & 0x01)
-            quality = b0 >> 2
-            angle = ((b1 >> 1) | (b2 << 7)) / 64.0
-            distance = (b3 | (b4 << 8)) / 4.0
-            if new_scan and scan:
-                yield scan
+        buf = bytearray()
+        while self._running:
+            if self._calibrate_requested:
+                port.write(bytes([SYNC_BYTE, STOP_CMD]))
+                time.sleep(1.0)
+                port.reset_input_buffer()
+                buf.clear()
+                self._calibrate_requested = False
+                self._run_calibration(port)
                 scan = []
-            if quality > 0 and distance > 0:
-                scan.append((quality, angle, distance))
+                continue
 
-    # ── Scanning (non-blocking, called from main loop) ───────────────────
+            chunk = port.read(max(5, port.in_waiting))
+            if not chunk:
+                continue
+            buf.extend(chunk)
 
-    def _start_scan(self):
-        """Send scan command and consume descriptor."""
-        self._send_cmd(SCAN_CMD)
-        old_timeout = self._port.timeout
-        self._port.timeout = 1.0
-        desc = self._port.read(DESCRIPTOR_LEN)
-        self._port.timeout = old_timeout
-        if len(desc) < DESCRIPTOR_LEN:
-            raise RuntimeError("no response descriptor")
-        self._scanning = True
-        self._partial_scan = []
+            while len(buf) >= 5:
+                b0, b1, b2, b3, b4 = buf[0], buf[1], buf[2], buf[3], buf[4]
+                new_scan = bool(b0 & 0x01)
+                quality = b0 >> 2
+                angle = ((b1 >> 1) | (b2 << 7)) / 64.0
+                distance = (b3 | (b4 << 8)) / 4.0
+                del buf[:5]
 
-    def _read_and_process(self):
-        """Non-blocking read of available bytes. Returns step events."""
-        if not self._scanning:
-            return []
+                if new_scan and scan:
+                    self._process_scan(scan)
+                    scan = []
 
-        waiting = self._port.in_waiting
-        if waiting < 5:
-            return []
+                if quality > 0 and distance > 0:
+                    scan.append((quality, angle, distance))
 
-        # Read available data, capped to avoid blocking
-        n_bytes = min(waiting, MAX_BYTES_PER_POLL)
-        raw = self._port.read(n_bytes)
+    def _read_scans(self, port):
+        """Yield complete scans (blocking, buffered)."""
+        scan = []
+        buf = bytearray()
+        while True:
+            chunk = port.read(max(5, port.in_waiting))
+            if not chunk:
+                continue
+            buf.extend(chunk)
 
-        events = []
-        for i in range(0, len(raw) - 4, 5):
-            b0, b1, b2, b3, b4 = raw[i:i+5]
-            new_scan = bool(b0 & 0x01)
-            quality = b0 >> 2
-            angle = ((b1 >> 1) | (b2 << 7)) / 64.0
-            distance = (b3 | (b4 << 8)) / 4.0
+            while len(buf) >= 5:
+                b0, b1, b2, b3, b4 = buf[0], buf[1], buf[2], buf[3], buf[4]
+                new_scan = bool(b0 & 0x01)
+                quality = b0 >> 2
+                angle = ((b1 >> 1) | (b2 << 7)) / 64.0
+                distance = (b3 | (b4 << 8)) / 4.0
+                del buf[:5]
 
-            if new_scan and self._partial_scan:
-                self._process_scan(self._partial_scan)
-                events.extend(self._event_queue)
-                self._event_queue.clear()
-                self._partial_scan = []
+                if new_scan and scan:
+                    yield scan
+                    scan = []
+                if quality > 0 and distance > 0:
+                    scan.append((quality, angle, distance))
 
-            if quality > 0 and distance > 0:
-                self._partial_scan.append((quality, angle, distance))
+    # ── Port detection ───────────────────────────────────────────────────
 
-        return events
+    @staticmethod
+    def _find_port():
+        for dev in glob.glob("/dev/ttyUSB*"):
+            try:
+                devname = os.path.basename(dev)
+                vid_path = os.path.realpath(f"/sys/class/tty/{devname}/device/../idVendor")
+                if os.path.exists(vid_path):
+                    vid = open(vid_path).read().strip()
+                    if vid == RPLIDAR_VID:
+                        return dev
+            except Exception:
+                continue
+        if os.path.exists(config.LIDAR_PORT):
+            return config.LIDAR_PORT
+        return None
 
-    # ── Processing ───────────────────────────────────────────────────────
-
-    def _send_cmd(self, cmd):
-        self._port.write(bytes([SYNC_BYTE, cmd]))
+    # ── Scan processing ──────────────────────────────────────────────────
 
     def _scan_to_polar(self, scan):
         result = {}
@@ -306,14 +275,9 @@ class LidarTracker:
         diff = abs((angle_deg - 180 + 180) % 360 - 180)
         return diff <= half
 
-    def _polar_to_xy(self, angle_deg, dist_mm):
-        rad = math.radians(angle_deg)
-        return (dist_mm * math.sin(rad), dist_mm * math.cos(rad))
-
     def _process_scan(self, scan):
         if self._background is None:
             return
-
         polar = self._scan_to_polar(scan)
         fg_points = []
         for angle_bin, dist in polar.items():
@@ -323,8 +287,8 @@ class LidarTracker:
             if np.isnan(bg_dist):
                 continue
             if dist < bg_dist - config.LIDAR_THRESHOLD_MM:
-                x, y = self._polar_to_xy(angle_bin, dist)
-                fg_points.append((x, y))
+                rad = math.radians(angle_bin)
+                fg_points.append((dist * math.sin(rad), dist * math.cos(rad)))
 
         clusters = self._cluster_points(fg_points)
         self._update_tracking(clusters)
@@ -347,22 +311,17 @@ class LidarTracker:
         result = []
         for c in clusters:
             if config.LIDAR_CLUSTER_MIN_PTS <= len(c) <= config.LIDAR_CLUSTER_MAX_PTS:
-                cx = sum(p[0] for p in c) / len(c)
-                cy = sum(p[1] for p in c) / len(c)
-                result.append((cx, cy))
+                result.append((sum(p[0] for p in c) / len(c), sum(p[1] for p in c) / len(c)))
         return result
 
     def _update_tracking(self, centroids):
         matched_ids = set()
-        match_radius = 300
         for cx, cy in centroids:
             best_id = None
             best_dist = float('inf')
             for cid, cs in self._clusters.items():
-                dx = cx - cs.centroid[0]
-                dy = cy - cs.centroid[1]
-                d = math.sqrt(dx * dx + dy * dy)
-                if d < best_dist and d < match_radius:
+                d = math.sqrt((cx - cs.centroid[0])**2 + (cy - cs.centroid[1])**2)
+                if d < best_dist and d < 300:
                     best_dist = d
                     best_id = cid
             if best_id is not None:
@@ -376,10 +335,7 @@ class LidarTracker:
             else:
                 cid = self._next_cluster_id
                 self._next_cluster_id += 1
-                cs = ClusterState(
-                    id=cid, centroid=(cx, cy), prev_centroid=(cx, cy),
-                    state='armed', frame_count=1,
-                )
+                cs = ClusterState(id=cid, centroid=(cx, cy), prev_centroid=(cx, cy), state='armed', frame_count=1)
                 self._clusters[cid] = cs
                 matched_ids.add(cid)
                 self._step_state_machine(cs, present=True)
@@ -394,14 +350,15 @@ class LidarTracker:
         for cid in absent_ids:
             del self._clusters[cid]
 
-    def _step_state_machine(self, cs: ClusterState, present: bool):
+    def _step_state_machine(self, cs, present):
         if cs.state == 'armed':
             if present and cs.frame_count >= config.LIDAR_STEP_MIN_FRAMES:
                 dx = cs.centroid[0] - cs.prev_centroid[0]
                 dy = cs.centroid[1] - cs.prev_centroid[1]
                 vel = math.sqrt(dx * dx + dy * dy)
                 if vel >= config.LIDAR_VELOCITY_MIN_MM or cs.frame_count == 1:
-                    self._event_queue.append(StepEvent(x_mm=cs.centroid[0], y_mm=cs.centroid[1]))
+                    with self._lock:
+                        self._event_queue.append(StepEvent(x_mm=cs.centroid[0], y_mm=cs.centroid[1]))
                     cs.state = 'fired'
                     cs.fired_count += 1
         elif cs.state == 'fired':
