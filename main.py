@@ -1,3 +1,4 @@
+import json
 import sys
 import os
 import time
@@ -5,6 +6,44 @@ import numpy as np
 import pygame
 import moderngl
 import config
+
+CONFIG_LOCAL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config_local.json")
+
+# Tunable parameters that can be saved/loaded
+TUNABLE_KEYS = [
+    "LIDAR_THRESHOLD_MM", "LIDAR_CLUSTER_MIN_PTS", "LIDAR_VELOCITY_MIN_MM",
+    "AUDIO_VOL_MAX", "AUDIO_PAN_RANGE", "FADE_RATE", "TRACE_INTENSITY",
+]
+
+
+def load_local_config():
+    """Load saved tuning overrides from config_local.json."""
+    if os.path.exists(CONFIG_LOCAL_PATH):
+        try:
+            with open(CONFIG_LOCAL_PATH) as f:
+                overrides = json.load(f)
+            for key, val in overrides.items():
+                if hasattr(config, key):
+                    setattr(config, key, val)
+            print(f"Config: loaded {len(overrides)} overrides from {CONFIG_LOCAL_PATH}")
+        except Exception as e:
+            print(f"Config: failed to load {CONFIG_LOCAL_PATH} — {e}")
+
+
+def save_local_config():
+    """Save current tunable values to config_local.json."""
+    data = {key: getattr(config, key) for key in TUNABLE_KEYS}
+    with open(CONFIG_LOCAL_PATH, "w") as f:
+        json.dump(data, f, indent=2)
+    print(f"Config: saved to {CONFIG_LOCAL_PATH}")
+
+
+def print_tuning():
+    """Print current tunable values."""
+    print("── Current tuning ──")
+    for key in TUNABLE_KEYS:
+        print(f"  {key} = {getattr(config, key)}")
+    print("────────────────────")
 from kinect import KinectCapture
 from renderer import Renderer, EFFECT_NAMES
 from audio import AudioEngine
@@ -38,6 +77,8 @@ def main():
     ctx = moderngl.create_context()
     ctx.viewport = (0, 0, width, height)
 
+    load_local_config()
+
     renderer = Renderer(ctx, render_w, render_h, screen_size=(width, height))
     kinect = KinectCapture(render_w, render_h)
 
@@ -60,6 +101,7 @@ def main():
     print("Keys: F=fullscreen, D=debug, K=freeze kinect,")
     print("  Up/Down=fade rate, [/]=trace intensity, S=screenshot, Q/Esc=quit")
     print("  V/X=volume up/down, C=recalibrate, L=footstep vis")
+    print("  ,/.=threshold, ;/'=velocity, -/+=cluster pts, P=print, W=save")
 
     # Show initial effect label
     renderer.set_effect(6)
@@ -90,18 +132,22 @@ def main():
                         pygame.mouse.set_visible(True)
                 elif event.key == pygame.K_UP:
                     fade_rate = min(1.0, fade_rate + 0.001)
+                    config.FADE_RATE = fade_rate
                     renderer.set_fade_rate(fade_rate)
                     print(f"Fade rate: {fade_rate:.4f}")
                 elif event.key == pygame.K_DOWN:
                     fade_rate = max(0.9, fade_rate - 0.001)
+                    config.FADE_RATE = fade_rate
                     renderer.set_fade_rate(fade_rate)
                     print(f"Fade rate: {fade_rate:.4f}")
                 elif event.key == pygame.K_RIGHTBRACKET:
                     trace_intensity = min(1.0, trace_intensity + 0.05)
+                    config.TRACE_INTENSITY = trace_intensity
                     renderer.set_trace_intensity(trace_intensity)
                     print(f"Trace intensity: {trace_intensity:.2f}")
                 elif event.key == pygame.K_LEFTBRACKET:
                     trace_intensity = max(0.0, trace_intensity - 0.05)
+                    config.TRACE_INTENSITY = trace_intensity
                     renderer.set_trace_intensity(trace_intensity)
                     print(f"Trace intensity: {trace_intensity:.2f}")
                 elif event.key == pygame.K_z:
@@ -127,6 +173,28 @@ def main():
                 elif event.key == pygame.K_k:
                     kinect.enabled = not kinect.enabled
                     print(f"Kinect frozen: {not kinect.enabled}")
+                elif event.key == pygame.K_PERIOD:
+                    config.LIDAR_THRESHOLD_MM = min(200, config.LIDAR_THRESHOLD_MM + 10)
+                    print(f"LiDAR threshold: {config.LIDAR_THRESHOLD_MM}mm")
+                elif event.key == pygame.K_COMMA:
+                    config.LIDAR_THRESHOLD_MM = max(10, config.LIDAR_THRESHOLD_MM - 10)
+                    print(f"LiDAR threshold: {config.LIDAR_THRESHOLD_MM}mm")
+                elif event.key == pygame.K_QUOTE:
+                    config.LIDAR_VELOCITY_MIN_MM = min(100, config.LIDAR_VELOCITY_MIN_MM + 5)
+                    print(f"LiDAR velocity min: {config.LIDAR_VELOCITY_MIN_MM}mm")
+                elif event.key == pygame.K_SEMICOLON:
+                    config.LIDAR_VELOCITY_MIN_MM = max(0, config.LIDAR_VELOCITY_MIN_MM - 5)
+                    print(f"LiDAR velocity min: {config.LIDAR_VELOCITY_MIN_MM}mm")
+                elif event.key == pygame.K_EQUALS:
+                    config.LIDAR_CLUSTER_MIN_PTS = min(10, config.LIDAR_CLUSTER_MIN_PTS + 1)
+                    print(f"LiDAR cluster min pts: {config.LIDAR_CLUSTER_MIN_PTS}")
+                elif event.key == pygame.K_MINUS:
+                    config.LIDAR_CLUSTER_MIN_PTS = max(1, config.LIDAR_CLUSTER_MIN_PTS - 1)
+                    print(f"LiDAR cluster min pts: {config.LIDAR_CLUSTER_MIN_PTS}")
+                elif event.key == pygame.K_p:
+                    print_tuning()
+                elif event.key == pygame.K_w:
+                    save_local_config()
                 elif event.key == pygame.K_s:
                     pixels = ctx.screen.read(components=3)
                     img = pygame.image.fromstring(
