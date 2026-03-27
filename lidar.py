@@ -1,12 +1,14 @@
 """RPLIDAR C1 footstep detector for Fossil installation."""
 
 import math
+import struct
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
 
 import numpy as np
+import serial
 
 import config
 
@@ -28,9 +30,17 @@ class ClusterState:
     absent_count: int = 0
 
 
+# RPLIDAR protocol constants
+SYNC_BYTE = 0xA5
+SCAN_CMD = 0x20
+STOP_CMD = 0x25
+RESET_CMD = 0x40
+DESCRIPTOR_LEN = 7
+
+
 class LidarTracker:
     def __init__(self):
-        self._lidar = None
+        self._serial_port = None
         self._background = None        # median distances per angle bin
         self._running = False
         self._thread = None
@@ -42,13 +52,22 @@ class LidarTracker:
     def setup(self):
         """Connect to RPLIDAR and calibrate. Soft-fails if unavailable."""
         try:
-            from rplidarc1 import RPLidarC1
-            self._lidar = RPLidarC1(config.LIDAR_PORT, baudrate=config.LIDAR_BAUD)
-            self._lidar.connect()
+            self._serial_port = serial.Serial(
+                config.LIDAR_PORT,
+                baudrate=config.LIDAR_BAUD,
+                timeout=1.0,
+            )
+            # Stop any ongoing scan and reset
+            self._send_cmd(STOP_CMD)
+            time.sleep(0.1)
+            self._serial_port.reset_input_buffer()
+            self._send_cmd(RESET_CMD)
+            time.sleep(1.0)
+            self._serial_port.reset_input_buffer()
             print("LiDAR: connected")
         except Exception as e:
             print(f"LiDAR: not available ({e}), running without footstep detection")
-            self._lidar = None
+            self._serial_port = None
             return
 
         self.calibrate()
@@ -58,23 +77,40 @@ class LidarTracker:
         self._thread.start()
 
     def calibrate(self):
-        """Capture background scan (room must be empty)."""
-        if self._lidar is None:
+        """Capture background scan (room must be empty). Stops scan thread first."""
+        if self._serial_port is None:
             return
 
+        # Stop scan thread if running
+        if self._running:
+            self._running = False
+            self._thread.join(timeout=2.0)
+            self._thread = None
+
         print("LiDAR: calibrating background...")
-        frames = []
-        scan_iter = self._lidar.iter_scans()
+
+        # Start scan
+        self._send_cmd(STOP_CMD)
+        time.sleep(0.1)
+        self._serial_port.reset_input_buffer()
+        self._start_scan()
+
         # Settle
         settle_end = time.monotonic() + config.LIDAR_BG_SETTLE_SEC
-        for scan in scan_iter:
+        for scan in self._iter_scans_internal():
             if time.monotonic() >= settle_end:
                 break
 
-        for scan in scan_iter:
+        frames = []
+        for scan in self._iter_scans_internal():
             frames.append(self._scan_to_polar(scan))
             if len(frames) >= config.LIDAR_BG_FRAMES:
                 break
+
+        # Stop scan for now (scan_loop will restart it)
+        self._send_cmd(STOP_CMD)
+        time.sleep(0.1)
+        self._serial_port.reset_input_buffer()
 
         # Compute median distance per angle bin (1° bins)
         bins = np.full(360, np.nan)
@@ -90,6 +126,11 @@ class LidarTracker:
         self._clusters.clear()
         print("LiDAR: background learned")
 
+        # Restart scan thread
+        self._running = True
+        self._thread = threading.Thread(target=self._scan_loop, daemon=True)
+        self._thread.start()
+
     def get_step_events(self) -> list[StepEvent]:
         """Drain and return pending step events (thread-safe)."""
         with self._lock:
@@ -97,19 +138,73 @@ class LidarTracker:
             self._event_queue.clear()
         return events
 
+    def get_debug_state(self):
+        """Return snapshot of clusters and background for visualization."""
+        with self._lock:
+            clusters = {cid: ClusterState(
+                id=cs.id,
+                centroid=cs.centroid,
+                prev_centroid=cs.prev_centroid,
+                state=cs.state,
+                frame_count=cs.frame_count,
+                fired_count=cs.fired_count,
+                absent_count=cs.absent_count,
+            ) for cid, cs in self._clusters.items()}
+        bg = self._background.copy() if self._background is not None else None
+        return clusters, bg
+
     def close(self):
         """Stop scanning and disconnect."""
         self._running = False
         if self._thread:
             self._thread.join(timeout=2.0)
-        if self._lidar:
+        if self._serial_port:
             try:
-                self._lidar.disconnect()
+                self._send_cmd(STOP_CMD)
+                time.sleep(0.1)
+                self._serial_port.close()
             except Exception:
                 pass
             print("LiDAR: stopped")
 
-    # ── Internal ──────────────────────────────────────────────────────────
+    # ── Serial protocol ──────────────────────────────────────────────────
+
+    def _send_cmd(self, cmd):
+        """Send a command byte to the RPLIDAR."""
+        self._serial_port.write(bytes([SYNC_BYTE, cmd]))
+
+    def _start_scan(self):
+        """Send scan command and consume the response descriptor."""
+        self._send_cmd(SCAN_CMD)
+        # Read 7-byte response descriptor
+        desc = self._serial_port.read(DESCRIPTOR_LEN)
+        if len(desc) < DESCRIPTOR_LEN:
+            raise RuntimeError("LiDAR: no response descriptor")
+
+    def _iter_scans_internal(self):
+        """Yield complete scans as lists of (quality, angle, distance)."""
+        scan = []
+        while True:
+            # Each measurement is 5 bytes
+            raw = self._serial_port.read(5)
+            if len(raw) < 5:
+                continue
+
+            # Parse measurement packet
+            b0, b1, b2, b3, b4 = raw
+            new_scan = bool(b0 & 0x01)
+            quality = b0 >> 2
+            angle = ((b1 >> 1) | (b2 << 7)) / 64.0
+            distance = (b3 | (b4 << 8)) / 4.0
+
+            if new_scan and scan:
+                yield scan
+                scan = []
+
+            if quality > 0 and distance > 0:
+                scan.append((quality, angle, distance))
+
+    # ── Scan processing ──────────────────────────────────────────────────
 
     def _scan_to_polar(self, scan):
         """Convert raw scan to dict of {angle_bin: distance_mm}."""
@@ -125,7 +220,6 @@ class LidarTracker:
 
     def _is_rear_arc(self, angle_deg):
         """True if angle is in the rear (wall-facing) masked arc."""
-        # Rear = ±LIDAR_MASK_REAR_DEG around 180°
         half = config.LIDAR_MASK_REAR_DEG
         diff = abs((angle_deg - 180 + 180) % 360 - 180)
         return diff <= half
@@ -140,7 +234,8 @@ class LidarTracker:
     def _scan_loop(self):
         """Background thread: scan, detect foreground, track clusters."""
         try:
-            for scan in self._lidar.iter_scans():
+            self._start_scan()
+            for scan in self._iter_scans_internal():
                 if not self._running:
                     break
                 self._process_scan(scan)
@@ -162,15 +257,11 @@ class LidarTracker:
             bg_dist = self._background[angle_bin]
             if np.isnan(bg_dist):
                 continue
-            # Foreground = closer than background by threshold
             if dist < bg_dist - config.LIDAR_THRESHOLD_MM:
                 x, y = self._polar_to_xy(angle_bin, dist)
                 fg_points.append((x, y))
 
-        # Cluster foreground points (simple distance-based)
         clusters = self._cluster_points(fg_points)
-
-        # Track clusters through state machine
         self._update_tracking(clusters)
 
     def _cluster_points(self, points):
@@ -183,17 +274,15 @@ class LidarTracker:
         current = [points[0]]
 
         for p in points[1:]:
-            # Check distance to last point in current cluster
             dx = p[0] - current[-1][0]
             dy = p[1] - current[-1][1]
-            if math.sqrt(dx * dx + dy * dy) < 200:  # 200mm linkage
+            if math.sqrt(dx * dx + dy * dy) < 200:
                 current.append(p)
             else:
                 clusters.append(current)
                 current = [p]
         clusters.append(current)
 
-        # Filter by size
         result = []
         for c in clusters:
             if config.LIDAR_CLUSTER_MIN_PTS <= len(c) <= config.LIDAR_CLUSTER_MAX_PTS:
@@ -206,9 +295,8 @@ class LidarTracker:
     def _update_tracking(self, centroids):
         """Four-state machine for each tracked cluster."""
         matched_ids = set()
-        match_radius = 300  # mm
+        match_radius = 300
 
-        # Match new centroids to existing clusters
         for cx, cy in centroids:
             best_id = None
             best_dist = float('inf')
@@ -229,7 +317,6 @@ class LidarTracker:
                 cs.absent_count = 0
                 self._step_state_machine(cs, present=True)
             else:
-                # New cluster
                 cid = self._next_cluster_id
                 self._next_cluster_id += 1
                 cs = ClusterState(
@@ -243,13 +330,11 @@ class LidarTracker:
                 matched_ids.add(cid)
                 self._step_state_machine(cs, present=True)
 
-        # Handle absent clusters
         absent_ids = []
         for cid, cs in self._clusters.items():
             if cid not in matched_ids:
                 cs.absent_count += 1
                 self._step_state_machine(cs, present=False)
-                # Remove clusters absent too long
                 if cs.absent_count > config.LIDAR_REARM_FRAMES + 5:
                     absent_ids.append(cid)
 
@@ -260,12 +345,10 @@ class LidarTracker:
         """Per-cluster four-state step detection."""
         if cs.state == 'armed':
             if present and cs.frame_count >= config.LIDAR_STEP_MIN_FRAMES:
-                # Check velocity
                 dx = cs.centroid[0] - cs.prev_centroid[0]
                 dy = cs.centroid[1] - cs.prev_centroid[1]
                 vel = math.sqrt(dx * dx + dy * dy)
                 if vel >= config.LIDAR_VELOCITY_MIN_MM or cs.frame_count == 1:
-                    # Fire step event
                     event = StepEvent(x_mm=cs.centroid[0], y_mm=cs.centroid[1])
                     with self._lock:
                         self._event_queue.append(event)
@@ -284,7 +367,6 @@ class LidarTracker:
 
         elif cs.state == 'cooling':
             if present:
-                # Reset if it reappeared during cooldown
                 cs.absent_count = 0
             elif cs.absent_count >= config.LIDAR_REARM_FRAMES:
                 cs.state = 'armed'

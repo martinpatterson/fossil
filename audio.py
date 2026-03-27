@@ -100,7 +100,7 @@ class AudioEngine:
 
         # Pan calculation (equal-power)
         half_width = config.LIDAR_GALLERY_WIDTH_MM / 2.0
-        x_norm = max(-1.0, min(1.0, x_mm / half_width)) if half_width > 0 else 0.0
+        x_norm = max(-1.0, min(1.0, -x_mm / half_width)) if half_width > 0 else 0.0
         pan = math.copysign(abs(x_norm) ** config.AUDIO_PAN_CURVE, x_norm) * config.AUDIO_PAN_RANGE
         # Equal-power pan law
         angle = (pan + 1.0) / 2.0 * (math.pi / 2.0)

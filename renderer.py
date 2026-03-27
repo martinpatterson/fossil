@@ -219,6 +219,21 @@ class Renderer:
     def set_trace_intensity(self, intensity: float):
         self.composite_prog["u_trace_intensity"].value = max(0.0, min(1.0, intensity))
 
+    def blit_rgb(self, rgb_array):
+        """Blit an RGB numpy array full-screen (for debug views)."""
+        h, w = rgb_array.shape[:2]
+        if not hasattr(self, '_blit_tex') or self._blit_tex.size != (w, h):
+            if hasattr(self, '_blit_tex'):
+                self._blit_tex.release()
+            self._blit_tex = self.ctx.texture((w, h), 3)
+            self._blit_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
+        self._blit_tex.write(rgb_array.tobytes())
+
+        self.ctx.screen.use()
+        self.ctx.viewport = (0, 0, self.screen_w, self.screen_h)
+        self._blit_tex.use(location=0)
+        self.passthrough_vao.render(moderngl.TRIANGLE_STRIP)
+
     def render(self):
         # Pass 1: composite
         self.fbos[self.write_idx].use()

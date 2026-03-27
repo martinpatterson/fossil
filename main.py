@@ -9,6 +9,7 @@ from kinect import KinectCapture
 from renderer import Renderer, EFFECT_NAMES
 from audio import AudioEngine
 from lidar import LidarTracker
+from footstep_vis import FootstepVis
 
 
 def main():
@@ -45,6 +46,9 @@ def main():
     audio = AudioEngine()
     audio.setup()
 
+    footstep_vis = FootstepVis(render_w, render_h)
+    show_footstep_vis = False
+
     fade_rate = config.FADE_RATE
     trace_intensity = config.TRACE_INTENSITY
 
@@ -55,7 +59,7 @@ def main():
     print(f"Effects (1-{len(EFFECT_NAMES)}): {', '.join(f'{i+1}={n}' for i, n in enumerate(EFFECT_NAMES))}")
     print("Keys: F=fullscreen, D=debug, K=freeze kinect,")
     print("  Up/Down=fade rate, [/]=trace intensity, S=screenshot, Q/Esc=quit")
-    print("  V/X=volume up/down, C=recalibrate")
+    print("  V/X=volume up/down, C=recalibrate, L=footstep vis")
 
     # Show initial effect label
     renderer.set_effect(6)
@@ -111,6 +115,9 @@ def main():
                 elif event.key == pygame.K_x:
                     config.AUDIO_VOL_MAX = max(0.1, config.AUDIO_VOL_MAX - 0.05)
                     print(f"Audio volume max: {config.AUDIO_VOL_MAX:.2f}")
+                elif event.key == pygame.K_l:
+                    show_footstep_vis = not show_footstep_vis
+                    print(f"Footstep vis: {'ON' if show_footstep_vis else 'OFF'}")
                 elif event.key == pygame.K_j:
                     config.AUDIO_PAN_RANGE = max(0.0, config.AUDIO_PAN_RANGE - 0.05)
                     print(f"Audio pan range: {config.AUDIO_PAN_RANGE:.2f}")
@@ -144,14 +151,22 @@ def main():
 
         renderer.update_debug(kinect.depth_vis, mask)
 
-        # Audio/LiDAR integration
+        # Audio/LiDAR integration — use LiDAR y_mm directly for volume
         step_events = lidar.get_step_events()
         for step in step_events:
-            depth_mm = kinect.get_nearest_blob_depth(step.x_mm, step.y_mm)
-            audio.trigger(step.x_mm, depth_mm)
+            audio.trigger(step.x_mm, step.y_mm)
+            footstep_vis.record_trigger(step.x_mm, step.y_mm, step.y_mm)
         audio.update()
 
-        renderer.render()
+        if show_footstep_vis:
+            clusters, bg = lidar.get_debug_state()
+            # Use LiDAR y_mm directly for depth display
+            for cid, cs in clusters.items():
+                footstep_vis.update_cluster_depth(cid, cs.centroid[1])
+            vis_frame = footstep_vis.render(clusters, bg)
+            renderer.blit_rgb(vis_frame)
+        else:
+            renderer.render()
         pygame.display.flip()
         clock.tick(config.TARGET_FPS)
 
