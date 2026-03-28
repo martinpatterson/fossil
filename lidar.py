@@ -1,6 +1,8 @@
 """RPLIDAR C1 footstep detector for Fossil installation."""
 
+import glob
 import math
+import os
 import struct
 import threading
 import time
@@ -11,6 +13,8 @@ import numpy as np
 import serial
 
 import config
+
+RPLIDAR_VID = "10c4"  # Silicon Labs CP2102N (RPLIDAR C1)
 
 
 @dataclass
@@ -50,11 +54,27 @@ class LidarTracker:
         self._next_cluster_id = 0
         self.needs_restart = False
 
+    @staticmethod
+    def _find_port():
+        """Find RPLIDAR serial port by USB vendor ID, fall back to config."""
+        for dev in glob.glob("/dev/ttyUSB*"):
+            try:
+                devname = os.path.basename(dev)
+                vid_path = os.path.realpath(f"/sys/class/tty/{devname}/device/../idVendor")
+                if os.path.exists(vid_path):
+                    vid = open(vid_path).read().strip()
+                    if vid == RPLIDAR_VID:
+                        return dev
+            except Exception:
+                continue
+        return config.LIDAR_PORT
+
     def setup(self):
         """Connect to RPLIDAR and calibrate. Soft-fails if unavailable."""
         try:
+            port_path = self._find_port()
             self._serial_port = serial.Serial(
-                config.LIDAR_PORT,
+                port_path,
                 baudrate=config.LIDAR_BAUD,
                 timeout=1.0,
             )
@@ -65,7 +85,7 @@ class LidarTracker:
             self._send_cmd(RESET_CMD)
             time.sleep(1.0)
             self._serial_port.reset_input_buffer()
-            print("LiDAR: connected")
+            print(f"LiDAR: connected on {port_path}")
         except Exception as e:
             print(f"LiDAR: not available ({e}), running without footstep detection")
             self._serial_port = None
