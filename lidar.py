@@ -57,13 +57,15 @@ class LidarTracker:
     @staticmethod
     def _find_port():
         """Find RPLIDAR serial port by USB vendor ID, fall back to config."""
-        for dev in glob.glob("/dev/ttyUSB*"):
+        import subprocess
+        for dev in sorted(glob.glob("/dev/ttyUSB*")):
             try:
-                devname = os.path.basename(dev)
-                vid_path = os.path.realpath(f"/sys/class/tty/{devname}/device/../idVendor")
-                if os.path.exists(vid_path):
-                    vid = open(vid_path).read().strip()
-                    if vid == RPLIDAR_VID:
+                result = subprocess.run(
+                    ["udevadm", "info", "--name", dev],
+                    capture_output=True, text=True, timeout=2,
+                )
+                for line in result.stdout.splitlines():
+                    if "ID_VENDOR_ID=" in line and RPLIDAR_VID in line:
                         return dev
             except Exception:
                 continue
