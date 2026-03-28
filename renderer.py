@@ -22,6 +22,12 @@ EFFECT_NAMES = [
     "Lens 3",
     "Topo 1",
     "3D",
+    "Pixel Mono",
+    "Pixel Inv",
+    "Pixel Warm",
+    "Pixel Depth",
+    "Pixel Large",
+    "Pixel Tiny",
 ]
 
 
@@ -168,6 +174,7 @@ class Renderer:
         self.composite_prog["u_fade_rate"].value = config.FADE_RATE
         self.composite_prog["u_trace_intensity"].value = config.TRACE_INTENSITY
         self.composite_prog["u_mode"].value = self.effect_mode
+        self.composite_prog["u_pixel_scale"].value = 1.0
 
         self.passthrough_prog["u_texture"].value = 0
         self.debug_prog["u_texture"].value = 0
@@ -224,6 +231,9 @@ class Renderer:
 
     def set_trace_intensity(self, intensity: float):
         self.composite_prog["u_trace_intensity"].value = max(0.0, min(1.0, intensity))
+
+    def set_pixel_scale(self, scale: float):
+        self.composite_prog["u_pixel_scale"].value = max(0.25, min(5.0, scale))
 
     def blit_rgb(self, rgb_array):
         """Blit an RGB numpy array full-screen (for debug views)."""

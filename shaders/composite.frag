@@ -7,6 +7,7 @@ uniform sampler2D u_depth_persist;
 uniform float     u_fade_rate;
 uniform float     u_trace_intensity;
 uniform int       u_mode;
+uniform float     u_pixel_scale;   // multiplier on pixel size (default 1.0)
 
 in  vec2 v_uv;
 
@@ -117,8 +118,8 @@ void main() {
         float depthVal = 1.0 - dot(depthRGB, vec3(0.299, 0.587, 0.114));
         // Closer = bigger pixels, farther = smaller
         // Range: 4px (far) to 40px (close)
-        float pixSize = mix(4.0, 40.0, depthVal * smoothstep(0.0, 0.2, accumulated));
-        pixSize = clamp(pixSize, 4.0, 40.0);
+        float pixSize = mix(4.0, 40.0, depthVal * smoothstep(0.0, 0.2, accumulated)) * u_pixel_scale;
+        pixSize = clamp(pixSize, 2.0, 120.0);
         // Snap to pixel grid at this size
         vec2 pUV = floor(v_uv * dims / pixSize) * pixSize / dims;
         vec4 px = texture(u_fossil, pUV);
@@ -271,6 +272,49 @@ void main() {
         // Smooth blend ramp to avoid harsh silhouette edge
         float blend = smoothstep(0.0, 0.25, accumulated);
         result = mix(fossil.rgb, depthColor, blend);
+    } else if (u_mode >= 15 && u_mode <= 20) {
+        // Pixel variants — only apply where fossil has content
+        accumulated = min(persist * u_fade_rate * u_fade_rate + sil * u_trace_intensity, MAX_TRACE);
+        float fossilBright = dot(fossil.rgb, vec3(0.299, 0.587, 0.114));
+        if (fossilBright < 0.01) {
+            // Black bar / letterbox area — leave as-is
+            result = fossil.rgb;
+        } else {
+            vec2 dims = vec2(textureSize(u_fossil, 0));
+            vec3 depthRGB = texture(u_depth_persist, v_uv).rgb;
+            float depthVal = 1.0 - dot(depthRGB, vec3(0.299, 0.587, 0.114));
+
+            float pxMin = 4.0, pxMax = 40.0, dk = 0.3;
+            if (u_mode == 19) { pxMin = 12.0; pxMax = 80.0; dk = 0.5; }
+            else if (u_mode == 20) { pxMin = 2.0; pxMax = 16.0; dk = 0.15; }
+
+            float pixSize = mix(pxMin, pxMax, depthVal * smoothstep(0.0, 0.2, accumulated)) * u_pixel_scale;
+            pixSize = clamp(pixSize, 2.0, 120.0);
+            vec2 pUV = floor(v_uv * dims / pixSize) * pixSize / dims;
+            vec4 px = texture(u_fossil, pUV);
+            vec3 pixColor = px.rgb;
+
+            if (u_mode == 15) {
+                // Mono
+                float lum = dot(pixColor, vec3(0.299, 0.587, 0.114));
+                pixColor = vec3(lum);
+            } else if (u_mode == 16) {
+                // Inverted
+                pixColor = 1.0 - pixColor;
+            } else if (u_mode == 17) {
+                // Warm
+                float lum = dot(pixColor, vec3(0.299, 0.587, 0.114));
+                pixColor = vec3(lum * 1.2, lum * 1.0, lum * 0.7);
+            } else if (u_mode == 18) {
+                // Depth colored
+                vec3 dc = texture(u_depth_persist, pUV).rgb;
+                if (length(dc) > 0.05) pixColor = dc;
+            }
+            // 19 = Large, 20 = Tiny — just different sizes, no color change
+
+            result = mix(fossil.rgb, pixColor, smoothstep(0.0, 0.3, accumulated));
+            result *= (1.0 - accumulated * dk);
+        }
     }
 
     out_display = vec4(result, 1.0);

@@ -256,6 +256,7 @@ class LidarTracker:
     def _scan_loop(self):
         """Background thread: scan, detect foreground, track clusters.
         Expects scan already running (started by calibrate)."""
+        self._scan_succeeded = False
         try:
             for scan in self._iter_scans_internal():
                 if not self._running:

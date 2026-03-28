@@ -17,6 +17,7 @@ import config
 class AudioEngine:
     def __init__(self):
         self._clips = []       # All loaded audio clips
+        self.muted = False
         self._voices = []      # Active playback voices
         self._master_vol = 1.0
         self._target_vol = 1.0
@@ -68,7 +69,7 @@ class AudioEngine:
 
     def trigger(self, x_mm: float, depth_mm: float):
         """Trigger a footstep sound at the given spatial position."""
-        if self._stream is None:
+        if self._stream is None or self.muted:
             return
         now = time.monotonic()
 

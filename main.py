@@ -92,6 +92,7 @@ def main():
 
     fade_rate = config.FADE_RATE
     trace_intensity = config.TRACE_INTENSITY
+    pixel_scale = 1.0
 
     clock = pygame.time.Clock()
     running = True
@@ -102,6 +103,7 @@ def main():
     print("  Up/Down=fade rate, [/]=trace intensity, S=screenshot, Q/Esc=quit")
     print("  V/X=volume up/down, C=recalibrate, L=footstep vis")
     print("  ,/.=threshold, ;/'=velocity, -/+=cluster pts, P=print, W=save")
+    print("  N/M=pixel size, R=mute. Pixel variants: G=Mono, I=Warm")
 
     # Show initial effect label
     renderer.set_effect(6)
@@ -194,6 +196,17 @@ def main():
                 elif event.key == pygame.K_MINUS:
                     config.LIDAR_CLUSTER_MIN_PTS = max(1, config.LIDAR_CLUSTER_MIN_PTS - 1)
                     print(f"LiDAR cluster min pts: {config.LIDAR_CLUSTER_MIN_PTS}")
+                elif event.key == pygame.K_n:
+                    pixel_scale = max(0.25, pixel_scale - 0.25)
+                    renderer.set_pixel_scale(pixel_scale)
+                    print(f"Pixel scale: {pixel_scale:.2f}")
+                elif event.key == pygame.K_m:
+                    pixel_scale = min(5.0, pixel_scale + 0.25)
+                    renderer.set_pixel_scale(pixel_scale)
+                    print(f"Pixel scale: {pixel_scale:.2f}")
+                elif event.key == pygame.K_r:
+                    audio.muted = not audio.muted
+                    print(f"Audio: {'MUTED' if audio.muted else 'unmuted'}")
                 elif event.key == pygame.K_p:
                     print_tuning()
                 elif event.key == pygame.K_w:
