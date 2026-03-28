@@ -53,6 +53,7 @@ class LidarTracker:
         self._clusters: dict[int, ClusterState] = {}
         self._next_cluster_id = 0
         self.needs_restart = False
+        self._scan_succeeded = False  # True after first successful scan
 
     @staticmethod
     def _find_port():
@@ -130,10 +131,8 @@ class LidarTracker:
             if len(frames) >= config.LIDAR_BG_FRAMES:
                 break
 
-        # Stop scan for now (scan_loop will restart it)
-        self._send_cmd(STOP_CMD)
-        time.sleep(0.1)
-        self._serial_port.reset_input_buffer()
+        # Don't stop the scan — leave motor running so _scan_loop
+        # can continue reading without needing a STOP/RESET/SCAN cycle.
 
         # Compute median distance per angle bin (1° bins)
         bins = np.full(360, np.nan)
@@ -255,16 +254,20 @@ class LidarTracker:
         return (x, y)
 
     def _scan_loop(self):
-        """Background thread: scan, detect foreground, track clusters."""
+        """Background thread: scan, detect foreground, track clusters.
+        Expects scan already running (started by calibrate)."""
         try:
-            self._start_scan()
             for scan in self._iter_scans_internal():
                 if not self._running:
                     break
+                self._scan_succeeded = True
                 self._process_scan(scan)
         except Exception as e:
             print(f"LiDAR scan error: {e}")
-            self.needs_restart = True
+            if self._scan_succeeded:
+                # Only restart if scanning was working — a mid-run failure
+                # means the device was unplugged or crashed.
+                self.needs_restart = True
 
     def _process_scan(self, scan):
         """Process one scan: background subtract, cluster, track steps."""
