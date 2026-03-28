@@ -48,6 +48,7 @@ class LidarTracker:
         self._lock = threading.Lock()
         self._clusters: dict[int, ClusterState] = {}
         self._next_cluster_id = 0
+        self.needs_restart = False
 
     def setup(self):
         """Connect to RPLIDAR and calibrate. Soft-fails if unavailable."""
@@ -241,6 +242,7 @@ class LidarTracker:
                 self._process_scan(scan)
         except Exception as e:
             print(f"LiDAR scan error: {e}")
+            self.needs_restart = True
 
     def _process_scan(self, scan):
         """Process one scan: background subtract, cluster, track steps."""

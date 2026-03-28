@@ -242,7 +242,7 @@ def main():
         else:
             renderer.render()
         # Check if sensors need a full process restart
-        if kinect.needs_restart:
+        if kinect.needs_restart or lidar.needs_restart:
             print("Sensor failure — restarting process...")
             break
 
@@ -255,7 +255,7 @@ def main():
             print(f"Main loop error: {e}")
             last_error_time = now
 
-    restart = kinect.needs_restart
+    restart = kinect.needs_restart or lidar.needs_restart
     lidar.close()
     audio.close()
     kinect.close()
