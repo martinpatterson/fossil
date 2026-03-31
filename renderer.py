@@ -116,6 +116,25 @@ class Renderer:
         )
         self.fossil_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
 
+        # Load second fossil photograph for crossfade
+        asset_path2 = os.path.join(os.path.dirname(__file__), "assets", "fossil2.png")
+        if os.path.exists(asset_path2):
+            img2 = Image.open(asset_path2).convert("RGB")
+            img2.thumbnail((self.width, self.height), Image.LANCZOS)
+            canvas2 = Image.new("RGB", (self.width, self.height), (0, 0, 0))
+            paste_x2 = (self.width - img2.width) // 2
+            paste_y2 = (self.height - img2.height) // 2
+            canvas2.paste(img2, (paste_x2, paste_y2))
+            img2 = canvas2
+            img2 = img2.transpose(Image.FLIP_TOP_BOTTOM)
+        else:
+            img2 = img  # fallback to same image
+        self.fossil2_tex = ctx.texture(
+            (self.width, self.height), 3, img2.tobytes()
+        )
+        self.fossil2_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
+        self._fossil_blend_start = time.time()
+
         # Silhouette texture
         blank = np.zeros((self.height, self.width), dtype="f4")
         self.sil_tex = ctx.texture(
@@ -168,9 +187,11 @@ class Renderer:
 
         # Set uniforms
         self.composite_prog["u_fossil"].value = 0
+        self.composite_prog["u_fossil2"].value = 4
         self.composite_prog["u_persistence"].value = 1
         self.composite_prog["u_silhouette"].value = 2
         self.composite_prog["u_depth_persist"].value = 3
+        self.composite_prog["u_fossil_blend"].value = 0.0
         self.composite_prog["u_fade_rate"].value = config.FADE_RATE
         self.composite_prog["u_trace_intensity"].value = config.TRACE_INTENSITY
         self.composite_prog["u_mode"].value = self.effect_mode
@@ -251,12 +272,25 @@ class Renderer:
         self.passthrough_vao.render(moderngl.TRIANGLE_STRIP)
 
     def render(self):
+        # Update fossil image crossfade (60s hold, 4s fade, 128s cycle)
+        t = (time.time() - self._fossil_blend_start) % 128.0
+        if t < 60.0:
+            blend = 0.0
+        elif t < 64.0:
+            blend = (t - 60.0) / 4.0
+        elif t < 124.0:
+            blend = 1.0
+        else:
+            blend = 1.0 - (t - 124.0) / 4.0
+        self.composite_prog["u_fossil_blend"].value = blend
+
         # Pass 1: composite
         self.fbos[self.write_idx].use()
         self.fossil_tex.use(location=0)
         self.persist_tex[self.read_idx].use(location=1)
         self.sil_tex.use(location=2)
         self.depth_persist_tex.use(location=3)
+        self.fossil2_tex.use(location=4)
         self.composite_vao.render(moderngl.TRIANGLE_STRIP)
 
         # Swap

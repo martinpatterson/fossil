@@ -1,6 +1,7 @@
 #version 330 core
 
 uniform sampler2D u_fossil;
+uniform sampler2D u_fossil2;
 uniform sampler2D u_persistence;
 uniform sampler2D u_silhouette;
 uniform sampler2D u_depth_persist;
@@ -8,6 +9,7 @@ uniform float     u_fade_rate;
 uniform float     u_trace_intensity;
 uniform int       u_mode;
 uniform float     u_pixel_scale;   // multiplier on pixel size (default 1.0)
+uniform float     u_fossil_blend;  // 0.0 = fossil, 1.0 = fossil2
 
 in  vec2 v_uv;
 
@@ -46,6 +48,10 @@ vec3 hsv2rgb(vec3 c) {
     return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
 }
 
+vec4 sampleFossil(vec2 uv) {
+    return mix(texture(u_fossil, uv), texture(u_fossil2, uv), u_fossil_blend);
+}
+
 void main() {
     float persist = texture(u_persistence, v_uv).r;
     float sil = texture(u_silhouette, v_uv).r;
@@ -81,7 +87,7 @@ void main() {
         accumulated = min(decayed + sil * u_trace_intensity, MAX_TRACE);
     }
 
-    vec4 fossil = texture(u_fossil, v_uv);
+    vec4 fossil = sampleFossil(v_uv);
     vec3 result = fossil.rgb;
 
     if (u_mode == 0) {
@@ -122,7 +128,7 @@ void main() {
         pixSize = clamp(pixSize, 2.0, 120.0);
         // Snap to pixel grid at this size
         vec2 pUV = floor(v_uv * dims / pixSize) * pixSize / dims;
-        vec4 px = texture(u_fossil, pUV);
+        vec4 px = sampleFossil(pUV);
         result = mix(fossil.rgb, px.rgb, smoothstep(0.0, 0.3, accumulated));
         result *= (1.0 - accumulated * 0.3);
     } else if (u_mode == 7) {
@@ -138,7 +144,7 @@ void main() {
         float dd = length(cp - cc);
         float rv = DOT_RADIUS + (fract(sin(dot(cid, vec2(53.1, 97.3))) * 43758.5453) - 0.5) * 0.08;
         float ic = 1.0 - smoothstep(rv - 0.04, rv, dd);
-        vec3 dc = texture(u_fossil, cuv).rgb;
+        vec3 dc = sampleFossil(cuv).rgb;
         vec3 gr = fossil.rgb * 0.4;
         result = mix(fossil.rgb, mix(gr, dc, ic), smoothstep(0.0, 0.25, accumulated));
         result *= (1.0 - accumulated * 0.15);
@@ -180,7 +186,7 @@ void main() {
         // Strong displacement
         float strength = accumulated * 0.5;
         vec2 lensUV = v_uv + grad * strength;
-        vec3 lensColor = texture(u_fossil, lensUV).rgb;
+        vec3 lensColor = sampleFossil(lensUV).rgb;
         result = lensColor;
     } else if (u_mode == 11) {
         // Lens 2: extreme version of Lens 1 (10x)
@@ -193,7 +199,7 @@ void main() {
         vec2 grad = vec2(sr - sl, st - sb);
         float strength = accumulated * 5.0;
         vec2 lensUV = v_uv + grad * strength;
-        vec3 lensColor = texture(u_fossil, lensUV).rgb;
+        vec3 lensColor = sampleFossil(lensUV).rgb;
         result = lensColor;
     } else if (u_mode == 12) {
         // Lens 3: moderate distortion, no doubling
@@ -206,7 +212,7 @@ void main() {
         vec2 grad = vec2(sr - sl, st - sb);
         float strength = accumulated * 1.5;
         vec2 lensUV = v_uv + grad * strength;
-        vec3 lensColor = texture(u_fossil, lensUV).rgb;
+        vec3 lensColor = sampleFossil(lensUV).rgb;
         result = lensColor;
     } else if (u_mode == 13) {
         // Topo 1: bold depth-colored contour lines
@@ -258,9 +264,9 @@ void main() {
         vec2 dispR = clamp(v_uv + depthNormal * strength * 1.15, 0.0, 1.0);
         vec2 dispG = clamp(v_uv + depthNormal * strength, 0.0, 1.0);
         vec2 dispB = clamp(v_uv + depthNormal * strength * 0.85, 0.0, 1.0);
-        result.r = texture(u_fossil, dispR).r;
-        result.g = texture(u_fossil, dispG).g;
-        result.b = texture(u_fossil, dispB).b;
+        result.r = sampleFossil(dispR).r;
+        result.g = sampleFossil(dispG).g;
+        result.b = sampleFossil(dispB).b;
 
         // Specular highlights from depth surface (whole body, not just edges)
         vec2 lightDir = normalize(vec2(0.6, 0.8));
@@ -291,7 +297,7 @@ void main() {
             float pixSize = mix(pxMin, pxMax, depthVal * smoothstep(0.0, 0.2, accumulated)) * u_pixel_scale;
             pixSize = clamp(pixSize, 2.0, 120.0);
             vec2 pUV = floor(v_uv * dims / pixSize) * pixSize / dims;
-            vec4 px = texture(u_fossil, pUV);
+            vec4 px = sampleFossil(pUV);
             vec3 pixColor = px.rgb;
 
             if (u_mode == 15) {
