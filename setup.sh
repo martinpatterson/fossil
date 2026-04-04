@@ -22,6 +22,10 @@ apt-get install -y \
     alsa-utils \
     libusb-1.0-0-dev \
     libudev-dev \
+    libportaudio2 \
+    libgl1-mesa-dev \
+    libsndfile1 \
+    curl \
     git
 
 # --- 2. Microsoft repo (for Azure Kinect SDK) ---
