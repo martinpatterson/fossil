@@ -13,7 +13,10 @@ CONFIG_LOCAL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "co
 TUNABLE_KEYS = [
     "LIDAR_THRESHOLD_MM", "LIDAR_CLUSTER_MIN_PTS", "LIDAR_VELOCITY_MIN_MM",
     "AUDIO_VOL_MAX", "AUDIO_PAN_RANGE", "FADE_RATE", "TRACE_INTENSITY",
+    "DEPTH_MODE",
 ]
+
+DEPTH_MODES = ["WFOV_2X2BINNED", "NFOV_2X2BINNED", "NFOV_UNBINNED"]  # WFOV_UNBINNED excluded (15fps only)
 
 
 def load_local_config():
@@ -103,7 +106,7 @@ def main():
     print("  Up/Down=fade rate, [/]=trace intensity, S=screenshot, Q/Esc=quit")
     print("  V/X=volume up/down, C=recalibrate, L=footstep vis")
     print("  ,/.=threshold, ;/'=velocity, -/+=cluster pts, P=print, W=save")
-    print("  N/M=pixel size, R=mute. Pixel variants: G=Mono, I=Warm")
+    print("  N/M=pixel size, R=mute, O=depth mode. Pixel variants: G=Mono, I=Warm")
 
     # Show initial effect label
     renderer.set_effect(6)
@@ -204,6 +207,13 @@ def main():
                     pixel_scale = min(5.0, pixel_scale + 0.25)
                     renderer.set_pixel_scale(pixel_scale)
                     print(f"Pixel scale: {pixel_scale:.2f}")
+                elif event.key == pygame.K_o:
+                    idx = DEPTH_MODES.index(config.DEPTH_MODE) if config.DEPTH_MODE in DEPTH_MODES else 0
+                    idx = (idx + 1) % len(DEPTH_MODES)
+                    config.DEPTH_MODE = DEPTH_MODES[idx]
+                    save_local_config()
+                    print(f"Depth mode: {config.DEPTH_MODE} — restarting...")
+                    kinect.needs_restart = True
                 elif event.key == pygame.K_r:
                     audio.muted = not audio.muted
                     print(f"Audio: {'MUTED' if audio.muted else 'unmuted'}")

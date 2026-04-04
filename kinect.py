@@ -36,6 +36,7 @@ class KinectCapture:
             depth_modes = {
                 "WFOV_2X2BINNED": DepthMode.WFOV_2X2BINNED,
                 "WFOV_UNBINNED": DepthMode.WFOV_UNBINNED,
+                "NFOV_2X2BINNED": DepthMode.NFOV_2X2BINNED,
                 "NFOV_UNBINNED": DepthMode.NFOV_UNBINNED,
             }
             fps_modes = {15: FPS.FPS_15, 30: FPS.FPS_30}

@@ -51,13 +51,22 @@ class AudioEngine:
         else:
             print(f"Audio: loaded {len(self._clips)} clips from {clip_dir}")
 
+        # Auto-detect analog headphone output, never HDMI
+        device = config.AUDIO_DEVICE
+        if device is None:
+            for i, d in enumerate(sd.query_devices()):
+                if 'ALC1220 Analog' in d.get('name', '') and d['max_output_channels'] >= 2:
+                    device = i
+                    print(f"Audio: using {d['name']} (device {i})")
+                    break
+
         try:
             self._stream = sd.OutputStream(
                 samplerate=config.AUDIO_SAMPLE_RATE,
                 channels=2,
                 dtype='float32',
                 callback=self._audio_callback,
-                device=config.AUDIO_DEVICE,
+                device=device,
                 blocksize=1024,
             )
             self._stream.start()

@@ -95,10 +95,7 @@ class LidarTracker:
             return
 
         self.calibrate()
-
-        self._running = True
-        self._thread = threading.Thread(target=self._scan_loop, daemon=True)
-        self._thread.start()
+        # calibrate() starts the scan thread
 
     def calibrate(self):
         """Capture background scan (room must be empty). Stops scan thread first."""

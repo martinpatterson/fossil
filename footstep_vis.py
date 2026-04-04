@@ -144,6 +144,7 @@ class FootstepVis:
             ("Fade Rate",     f"{config.FADE_RATE:.4f}"),
             ("Trace Int",     f"{config.TRACE_INTENSITY:.2f}"),
             ("Rate Limit",    f"{config.AUDIO_MIN_INTERVAL_MS}ms / {config.AUDIO_MAX_EVENTS_PER_SEC}/s"),
+            ("Depth Mode O",  config.DEPTH_MODE),
         ]
         for label, val in tuning:
             cv2.putText(img, f"{label}: {val}", (20, y_text),
