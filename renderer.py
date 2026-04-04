@@ -104,8 +104,8 @@ class Renderer:
         asset_path = os.path.join(os.path.dirname(__file__), "assets", "fossil.png")
         img = Image.open(asset_path).convert("RGB")
         img.thumbnail((self.width, self.height), Image.LANCZOS)
-        # Center on black background at render resolution
-        canvas = Image.new("RGB", (self.width, self.height), (0, 0, 0))
+        # Center on white background at render resolution
+        canvas = Image.new("RGB", (self.width, self.height), (255, 255, 255))
         paste_x = (self.width - img.width) // 2
         paste_y = (self.height - img.height) // 2
         canvas.paste(img, (paste_x, paste_y))
@@ -121,7 +121,7 @@ class Renderer:
         if os.path.exists(asset_path2):
             img2 = Image.open(asset_path2).convert("RGB")
             img2.thumbnail((self.width, self.height), Image.LANCZOS)
-            canvas2 = Image.new("RGB", (self.width, self.height), (0, 0, 0))
+            canvas2 = Image.new("RGB", (self.width, self.height), (255, 255, 255))
             paste_x2 = (self.width - img2.width) // 2
             paste_y2 = (self.height - img2.height) // 2
             canvas2.paste(img2, (paste_x2, paste_y2))
