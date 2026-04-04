@@ -63,10 +63,15 @@ SUBSYSTEM=="video4linux", ATTRS{idVendor}=="045e", ATTRS{idProduct}=="097c", ENV
 SUBSYSTEM=="video4linux", ATTRS{idVendor}=="045e", ATTRS{idProduct}=="097d", ENV{LIBPIPEWIRE_DONT_MANAGE}="1", TAG-="seat"
 EOF
 
+cat > /etc/udev/rules.d/99-rplidar.rules << 'EOF'
+# RPLIDAR C1 (Silicon Labs CP2102N)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", MODE="0666", GROUP="plugdev"
+EOF
+
 udevadm control --reload-rules
 
-# --- 4. Add user to plugdev group ---
-usermod -aG plugdev ${FOSSIL_USER}
+# --- 4. Add user to plugdev and dialout groups ---
+usermod -aG plugdev,dialout ${FOSSIL_USER}
 
 # --- 5. GDM auto-login ---
 echo ""
@@ -128,7 +133,7 @@ StandardOutput=append:/var/log/fossil.log
 StandardError=append:/var/log/fossil.log
 
 ProtectSystem=false
-ReadWritePaths=${FOSSIL_DIR} /tmp /var/log
+ReadWritePaths=${FOSSIL_DIR} /tmp /var/log /dev
 
 [Install]
 WantedBy=graphical.target
