@@ -25,6 +25,7 @@ apt-get install -y \
     libportaudio2 \
     libgl1-mesa-dev \
     libsndfile1 \
+    intel-opencl-icd \
     curl \
     git
 
@@ -119,9 +120,8 @@ User=${FOSSIL_USER}
 Group=${FOSSIL_USER}
 WorkingDirectory=${FOSSIL_DIR}
 Environment=DISPLAY=:0
-Environment=XAUTHORITY=/run/user/1000/gdm/Xauthority
 ExecStartPre=/bin/sleep 5
-ExecStart=${FOSSIL_DIR}/run.sh
+ExecStart=/bin/bash -c 'export XAUTHORITY=\$(ls /run/user/1000/.mutter-Xwaylandauth.* /run/user/1000/gdm/Xauthority 2>/dev/null | head -1); exec ${FOSSIL_DIR}/run.sh'
 Restart=always
 RestartSec=10
 StandardOutput=append:/var/log/fossil.log
@@ -163,10 +163,25 @@ apt-get remove -y gnome-keyring 2>/dev/null || true
 # --- 10. Disable screen blanking / power management ---
 echo ""
 echo "--- Disabling screen blanking ---"
-sudo -u ${FOSSIL_USER} DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus \
-    gsettings set org.gnome.desktop.session idle-delay 0 2>/dev/null || true
-sudo -u ${FOSSIL_USER} DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus \
-    gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing' 2>/dev/null || true
+DBUS=unix:path=/run/user/1000/bus
+sudo -u ${FOSSIL_USER} DBUS_SESSION_BUS_ADDRESS=$DBUS gsettings set org.gnome.desktop.screensaver lock-enabled false 2>/dev/null || true
+sudo -u ${FOSSIL_USER} DBUS_SESSION_BUS_ADDRESS=$DBUS gsettings set org.gnome.desktop.screensaver idle-activation-enabled false 2>/dev/null || true
+sudo -u ${FOSSIL_USER} DBUS_SESSION_BUS_ADDRESS=$DBUS gsettings set org.gnome.desktop.session idle-delay 0 2>/dev/null || true
+sudo -u ${FOSSIL_USER} DBUS_SESSION_BUS_ADDRESS=$DBUS gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing' 2>/dev/null || true
+sudo -u ${FOSSIL_USER} DBUS_SESSION_BUS_ADDRESS=$DBUS gsettings set org.gnome.settings-daemon.plugins.power idle-dim false 2>/dev/null || true
+
+# Autostart script to disable DPMS on every login
+mkdir -p /home/${FOSSIL_USER}/.config/autostart
+cat > /home/${FOSSIL_USER}/.config/autostart/disable-blanking.desktop << EOFAUTO
+[Desktop Entry]
+Type=Application
+Name=Disable Screen Blanking
+Exec=bash -c "xset s off; xset -dpms; xset s noblank"
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+EOFAUTO
+chown -R ${FOSSIL_USER}:${FOSSIL_USER} /home/${FOSSIL_USER}/.config/autostart
 
 echo ""
 echo "=== Setup complete ==="
