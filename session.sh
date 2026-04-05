@@ -1,5 +1,5 @@
 #!/bin/bash
-# Fossil kiosk session — no desktop environment
+# Fossil kiosk session — minimal window manager for keyboard focus
 # Disable ALL screen blanking and power management
 xset s off
 xset s noblank
@@ -12,6 +12,9 @@ unclutter -idle 0.5 -root &
 
 # Set background to white
 xsetroot -solid white
+
+# Start minimal window manager (handles focus, no decorations)
+matchbox-window-manager -use_titlebar no -use_cursor no &
 
 # Run fossil with auto-restart
 cd /home/martin/fossil

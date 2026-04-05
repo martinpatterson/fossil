@@ -80,11 +80,22 @@ Forces 1920x1080@60Hz on HDMI-1
 - libportaudio2, libsndfile1 (audio)
 - libgl1-mesa-dev (OpenGL)
 - unclutter (cursor hiding)
+- matchbox-window-manager (keyboard focus in kiosk mode)
 - cec-utils, avahi-daemon, avahi-utils
 
 ## Python Venv (/home/martin/fossil/.venv)
 pyk4a, opencv-python, numpy, moderngl, pygame, Pillow, pyserial,
 sounddevice, soundfile, scipy, rplidar-roboticia
+
+## UPS
+- **Model**: GoldenMate 600VA/360W LiFePO4 (76.8Wh)
+- **USB ID**: 075d:0300 (-BMS- Smart-Battery)
+- **Interface**: USB HID (monitor-only — no load switching)
+- **Runtime**: ~110 minutes on battery for NUC
+- **NUT**: Installed but disabled (clean shutdown causes S5 state which
+  prevents BIOS auto-power-on; UPS provides passive ride-through only)
+- **Power cycling**: Requires external smart plug (e.g. ezOutlet5) between
+  UPS and NUC for remote hard reboot capability
 
 ## Known Issues
 - **Kinect depth camera intermittent boot failure**: The depth camera (045e:097c)
@@ -92,10 +103,13 @@ sounddevice, soundfile, scipy, rplidar-roboticia
   between the NUC and Kinect resolves this. Software USB resets do not help.
 - **DPMS**: Even with xset -dpms, the "Enabled" flag persists but timeouts are
   set to 0 so no blanking occurs.
+- **WiFi power save**: Must be disabled (`wifi.powersave = 2` in
+  NetworkManager config) or the radio sleeps and stops responding to
+  ARP/ping, making the NUC appear offline.
 
 ## Network
 - Hostname: nuc
-- WiFi enabled for remote access
+- WiFi enabled for remote access (power save disabled)
 - Avahi/mDNS: advertises as nuc.local
 
 ## Remote Access

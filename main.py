@@ -76,6 +76,7 @@ def main():
     pygame.display.set_mode((width, height), flags)
     pygame.display.set_caption("Fossil")
     pygame.mouse.set_visible(False)
+    pygame.event.set_grab(True)
 
     ctx = moderngl.create_context()
     ctx.viewport = (0, 0, width, height)

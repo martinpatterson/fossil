@@ -26,6 +26,8 @@ apt-get install -y \
     libgl1-mesa-dev \
     libsndfile1 \
     intel-opencl-icd \
+    unclutter \
+    matchbox-window-manager \
     curl \
     git
 
@@ -68,18 +70,32 @@ cat > /etc/udev/rules.d/99-rplidar.rules << 'EOF'
 SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", MODE="0666", GROUP="plugdev"
 EOF
 
+cat > /etc/udev/rules.d/99-ups.rules << 'EOF'
+# BMS Smart-Battery UPS (for NUT monitoring)
+SUBSYSTEM=="usb", ATTR{idVendor}=="075d", ATTR{idProduct}=="0300", MODE="0666", GROUP="nut"
+EOF
+
 udevadm control --reload-rules
 
-# --- 4. Add user to plugdev and dialout groups ---
+# --- 4. Disable WiFi power save (causes unreachable radio) ---
+echo ""
+echo "--- Disabling WiFi power save ---"
+cat > /etc/NetworkManager/conf.d/default-wifi-powersave-on.conf << 'EOF'
+[connection]
+wifi.powersave = 2
+EOF
+
+# --- 5. Add user to plugdev and dialout groups ---
 usermod -aG plugdev,dialout ${FOSSIL_USER}
 
-# --- 5. GDM auto-login ---
+# --- 6. GDM auto-login ---
 echo ""
 echo "--- Configuring auto-login ---"
 cat > /etc/gdm3/custom.conf << EOF
 [daemon]
 AutomaticLoginEnable=true
 AutomaticLogin=${FOSSIL_USER}
+DefaultSession=fossil.desktop
 
 [security]
 
@@ -90,7 +106,17 @@ AutomaticLogin=${FOSSIL_USER}
 [debug]
 EOF
 
-# --- 6. Python virtual environment ---
+# Install fossil X session
+cat > /usr/share/xsessions/fossil.desktop << 'EOF'
+[Desktop Entry]
+Name=Fossil
+Comment=Fossil kiosk session
+Exec=/home/martin/fossil/start.sh
+Type=Application
+DesktopNames=Fossil
+EOF
+
+# --- 7. Python virtual environment ---
 echo ""
 echo "--- Setting up Python virtual environment ---"
 if [ ! -d "${FOSSIL_DIR}/.venv" ]; then
@@ -110,7 +136,7 @@ sudo -u ${FOSSIL_USER} "${FOSSIL_DIR}/.venv/bin/pip" install \
     scipy \
     rplidar-roboticia
 
-# --- 7. Systemd service ---
+# --- 8. Systemd service ---
 echo ""
 echo "--- Installing systemd service ---"
 cat > /etc/systemd/system/fossil.service << EOF
@@ -146,7 +172,7 @@ chmod +x "${FOSSIL_DIR}/run.sh"
 systemctl daemon-reload
 systemctl enable fossil.service
 
-# --- 8. Audio: set analog output to max ---
+# --- 9. Audio: set analog output to max ---
 echo ""
 echo "--- Configuring audio ---"
 # Find the PCH card number (may vary by hardware)
@@ -162,10 +188,10 @@ else
     echo "Audio: WARNING — PCH card not found, configure manually"
 fi
 
-# --- 9. Remove gnome-keyring (causes login prompts) ---
+# --- 10. Remove gnome-keyring (causes login prompts) ---
 apt-get remove -y gnome-keyring 2>/dev/null || true
 
-# --- 10. Disable screen blanking / power management ---
+# --- 11. Disable screen blanking / power management ---
 echo ""
 echo "--- Disabling screen blanking ---"
 DBUS=unix:path=/run/user/1000/bus
