@@ -214,6 +214,32 @@ X-GNOME-Autostart-enabled=true
 EOFAUTO
 chown -R ${FOSSIL_USER}:${FOSSIL_USER} /home/${FOSSIL_USER}/.config/autostart
 
+# --- 12. Disable USB autosuspend (Kinect reliability) ---
+echo ""
+echo "--- Disabling USB autosuspend ---"
+if ! grep -q 'usbcore.autosuspend=-1' /etc/default/grub; then
+    sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 usbcore.autosuspend=-1"/' /etc/default/grub
+    update-grub
+fi
+
+# --- 13. Tailscale (remote access from anywhere) ---
+echo ""
+echo "--- Installing Tailscale ---"
+if ! command -v tailscale &>/dev/null; then
+    curl -fsSL https://tailscale.com/install.sh | sh
+    echo "Run 'sudo tailscale up' to authenticate after setup"
+fi
+
+# --- 14. Healthchecks.io monitoring ---
+echo ""
+echo "--- Setting up health check ping ---"
+HEALTHCHECK_URL="https://hc-ping.com/61821f08-8e12-4e92-bda2-0a406a63fe38"
+cat > /etc/cron.d/healthcheck << EOF
+# Ping healthchecks.io every 5 minutes
+*/5 * * * * ${FOSSIL_USER} curl -fsS -m 10 --retry 5 ${HEALTHCHECK_URL} > /dev/null 2>&1
+EOF
+chmod 644 /etc/cron.d/healthcheck
+
 echo ""
 echo "=== Setup complete ==="
 echo "Next steps:"

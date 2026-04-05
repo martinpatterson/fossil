@@ -114,8 +114,13 @@ sounddevice, soundfile, scipy, rplidar-roboticia
 
 ## Remote Access
 ```
-ssh martin@nuc.local   # or by IP
+ssh martin@nuc.local        # local network
+ssh martin@100.108.88.51    # Tailscale (anywhere)
 ```
+
+## Monitoring
+- **Healthchecks.io**: NUC pings every 5 min, phone alert on failure
+- **Tailscale**: VPN mesh for remote SSH from anywhere
 
 ## Monitoring
 ```
