@@ -2,6 +2,8 @@
 # Environmental monitoring for museum installation
 # Pings healthchecks.io with warnings (does NOT shut down or take action)
 HC_URL="https://hc-ping.com/1628f9ee-7fdf-4cc7-bf3b-7a240450227d"
+PO_TOKEN="avmrkpiuza87mcofkwn98s5prd2ukn"
+PO_USER="umhhs2kiz34wq91k76a1skjrq6vft5"
 WARNINGS=""
 
 # --- CPU temperature (zone 1 = x86_pkg_temp) ---
@@ -42,7 +44,16 @@ fi
 
 # --- Send result ---
 if [ -n "$WARNINGS" ]; then
+    MSG=$(echo -e "$WARNINGS")
     echo -e "$WARNINGS" | curl -fsS -m 10 "${HC_URL}/fail" --data-binary @- > /dev/null 2>&1
+    # Pushover direct notification with detail
+    curl -fsS -m 10 -X POST https://api.pushover.net/1/messages.json \
+        -d "token=${PO_TOKEN}" \
+        -d "user=${PO_USER}" \
+        -d "title=Fossil NUC Alert" \
+        -d "message=${MSG}" \
+        -d "priority=1" \
+        -d "sound=siren" > /dev/null 2>&1
 else
     curl -fsS -m 10 "${HC_URL}" > /dev/null 2>&1
 fi
