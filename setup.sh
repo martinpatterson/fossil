@@ -240,10 +240,84 @@ cat > /etc/cron.d/healthcheck << EOF
 EOF
 chmod 644 /etc/cron.d/healthcheck
 
+# --- 15. Environmental monitoring ---
+echo ""
+echo "--- Setting up environmental monitoring ---"
+cat > /etc/cron.d/env-check << EOF
+# Environmental monitoring every 5 minutes
+*/5 * * * * ${FOSSIL_USER} ${FOSSIL_DIR}/env-check.sh > /dev/null 2>&1
+EOF
+chmod 644 /etc/cron.d/env-check
+chmod +x "${FOSSIL_DIR}/env-check.sh"
+
+# --- 16. Passwordless reboot for Kinect recovery ---
+cat > /etc/sudoers.d/fossil-reboot << EOF
+${FOSSIL_USER} ALL=(ALL) NOPASSWD: /sbin/reboot
+EOF
+chmod 440 /etc/sudoers.d/fossil-reboot
+
+# --- 17. Boot notification ---
+cat > /etc/systemd/system/boot-notify.service << EOF
+[Unit]
+Description=Pushover boot notification
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=${FOSSIL_USER}
+ExecStart=/bin/bash -c 'sleep 10 && curl -fsS -m 10 -X POST https://api.pushover.net/1/messages.json -d "token=avmrkpiuza87mcofkwn98s5prd2ukn" -d "user=umhhs2kiz34wq91k76a1skjrq6vft5" -d "title=Fossil NUC" -d "message=System booted at \$(date)" -d "priority=0"'
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl enable boot-notify.service
+
+# --- 18. WiFi keepalive (prevent router ARP expiry) ---
+cat > /etc/cron.d/wifi-keepalive << 'EOF'
+# Ping gateway every minute to keep ARP table fresh on router
+* * * * * martin GW=$(ip route | awk '/default.*wlo1/{print $3}'); [ -n "$GW" ] && ping -c 1 -W 2 $GW > /dev/null 2>&1
+EOF
+chmod 644 /etc/cron.d/wifi-keepalive
+
+# --- 19. Force WiFi to 5GHz band (avoid 6GHz driver quirks) ---
+echo ""
+echo "--- Configuring WiFi band ---"
+nmcli connection show 2>/dev/null | grep -q "ANY" && \
+    nmcli connection modify "ANY 1" 802-11-wireless.band a 2>/dev/null || true
+
+# --- 20. Private network (wired 10.0.0.x) ---
+echo ""
+echo "--- Configuring private network ---"
+cat > /etc/hosts << EOF
+127.0.0.1 localhost
+127.0.1.1 nuc
+
+# Museum private network
+10.0.0.1  fossil
+10.0.0.2  ezoutlet
+10.0.0.10 fossil-pj
+10.0.0.11 haste-pj
+EOF
+
+# Set static IP on wired interface
+nmcli connection show "Wired connection 1" &>/dev/null && \
+    nmcli connection modify "Wired connection 1" ipv4.method manual ipv4.addresses 10.0.0.1/24 ipv4.gateway "" ipv4.dns "" 2>/dev/null || true
+
+# --- 21. NUT UPS monitoring (driver/server only, no auto-shutdown) ---
+echo ""
+echo "--- Configuring UPS monitoring ---"
+if dpkg -l nut &>/dev/null; then
+    sed -i 's/MODE=none/MODE=standalone/' /etc/nut/nut.conf 2>/dev/null || true
+    systemctl enable nut-server.service nut-driver@ups.service 2>/dev/null || true
+    systemctl mask nut-monitor.service 2>/dev/null || true
+fi
+
 echo ""
 echo "=== Setup complete ==="
 echo "Next steps:"
 echo "  1. Copy fossil project files to ${FOSSIL_DIR}"
 echo "  2. Copy assets (fossil.png, fossil2.png, audio/) to ${FOSSIL_DIR}/assets/"
-echo "  3. Reboot: sudo reboot"
-echo "  4. Fossil will auto-start after login"
+echo "  3. Run 'sudo tailscale up' to authenticate Tailscale"
+echo "  4. Reboot: sudo reboot"
+echo "  5. Fossil will auto-start after login"
