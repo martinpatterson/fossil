@@ -75,32 +75,18 @@ def service_stop():
     )
 
 
-async def get_pj_power(name, ip):
-    """Query projector power state. Returns True/False/None on error."""
+async def monitor():
     from androidtvremote2 import AndroidTVRemote
     from androidtvremote2.exceptions import CannotConnect, ConnectionClosed
 
-    certfile = os.path.join(CERT_DIR, f"{name}-cert.pem")
-    keyfile = os.path.join(CERT_DIR, f"{name}-key.pem")
-    if not os.path.exists(certfile):
-        return None
-    try:
-        remote = AndroidTVRemote("Fossil NUC", certfile, keyfile, ip)
-        await remote.async_connect()
-        power = remote.is_on
-        remote.disconnect()
-        return power
-    except (CannotConnect, ConnectionClosed, OSError):
-        return None
-
-
-async def monitor():
     config = load_config()
     if MONITOR_PJ not in config:
         print(f"Projector '{MONITOR_PJ}' not in pj-config.json", flush=True)
         sys.exit(1)
 
     ip = config[MONITOR_PJ]["ip"]
+    certfile = os.path.join(CERT_DIR, f"{MONITOR_PJ}-cert.pem")
+    keyfile = os.path.join(CERT_DIR, f"{MONITOR_PJ}-key.pem")
     print(f"Monitoring {MONITOR_PJ} ({ip}) every {POLL_INTERVAL}s", flush=True)
 
     # Default: app should be running (assume PJ on until proven off)
@@ -109,9 +95,22 @@ async def monitor():
         print(f"Starting app (default on until PJ state known)", flush=True)
         service_start()
     conn_failures = 0
+    remote = None
 
     while True:
-        power = await get_pj_power(MONITOR_PJ, ip)
+        power = None
+        try:
+            if remote is None:
+                remote = AndroidTVRemote("Fossil NUC", certfile, keyfile, ip)
+                await remote.async_connect()
+                await asyncio.sleep(1)
+            power = remote.is_on
+        except (CannotConnect, ConnectionClosed, OSError) as e:
+            print(f"  PJ connection error: {e}", flush=True)
+            remote = None
+        except Exception as e:
+            print(f"  PJ unexpected error: {e}", flush=True)
+            remote = None
 
         if power is None:
             conn_failures += 1

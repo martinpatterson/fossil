@@ -134,14 +134,17 @@ sudo -u ${FOSSIL_USER} "${FOSSIL_DIR}/.venv/bin/pip" install \
     sounddevice \
     soundfile \
     scipy \
-    rplidar-roboticia
+    rplidar-roboticia \
+    androidtvremote2
 
-# --- 8. Systemd service ---
+# --- 8. Systemd services ---
 echo ""
-echo "--- Installing systemd service ---"
-cat > /etc/systemd/system/fossil.service << EOF
+echo "--- Installing systemd services ---"
+
+# fossil-app.service — runs the app only, controlled by pj-monitor
+cat > /etc/systemd/system/fossil-app.service << EOF
 [Unit]
-Description=Fossil Interactive Installation
+Description=Fossil Interactive Installation App
 After=graphical.target
 Wants=graphical.target
 
@@ -150,11 +153,8 @@ Type=simple
 User=${FOSSIL_USER}
 Group=${FOSSIL_USER}
 WorkingDirectory=${FOSSIL_DIR}
-Environment=DISPLAY=:0
-ExecStartPre=/bin/sleep 5
-ExecStart=/bin/bash -c 'export XAUTHORITY=\$(ls /run/user/1000/.mutter-Xwaylandauth.* /run/user/1000/gdm/Xauthority 2>/dev/null | head -1); exec ${FOSSIL_DIR}/run.sh'
-Restart=always
-RestartSec=10
+EnvironmentFile=/tmp/fossil-display-env
+ExecStart=${FOSSIL_DIR}/.venv/bin/python ${FOSSIL_DIR}/main.py
 StandardOutput=append:/var/log/fossil.log
 StandardError=append:/var/log/fossil.log
 
@@ -165,12 +165,35 @@ ReadWritePaths=${FOSSIL_DIR} /tmp /var/log /dev
 WantedBy=graphical.target
 EOF
 
+# pj-monitor.service — controls fossil-app based on projector state
+cat > /etc/systemd/system/pj-monitor.service << EOF
+[Unit]
+Description=Projector monitor — controls fossil-app based on projector state
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${FOSSIL_USER}
+Group=${FOSSIL_USER}
+WorkingDirectory=${FOSSIL_DIR}
+Environment=PATH=${FOSSIL_DIR}/.venv/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=${FOSSIL_DIR}/.venv/bin/python ${FOSSIL_DIR}/pj-monitor.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/fossil.log
+StandardError=append:/var/log/fossil.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 touch /var/log/fossil.log
 chown ${FOSSIL_USER}:${FOSSIL_USER} /var/log/fossil.log
-chmod +x "${FOSSIL_DIR}/run.sh"
 
 systemctl daemon-reload
-systemctl enable fossil.service
+systemctl disable fossil.service 2>/dev/null || true
+systemctl enable pj-monitor.service
 
 # --- 9. Audio: set analog output to max ---
 echo ""
@@ -244,17 +267,18 @@ chmod 644 /etc/cron.d/healthcheck
 echo ""
 echo "--- Setting up environmental monitoring ---"
 cat > /etc/cron.d/env-check << EOF
-# Environmental monitoring every 5 minutes
-*/5 * * * * ${FOSSIL_USER} ${FOSSIL_DIR}/env-check.sh > /dev/null 2>&1
+# Environmental monitoring every minute
+* * * * * ${FOSSIL_USER} ${FOSSIL_DIR}/env-check.sh > /dev/null 2>&1
 EOF
 chmod 644 /etc/cron.d/env-check
 chmod +x "${FOSSIL_DIR}/env-check.sh"
 
-# --- 16. Passwordless reboot for Kinect recovery ---
-cat > /etc/sudoers.d/fossil-reboot << EOF
-${FOSSIL_USER} ALL=(ALL) NOPASSWD: /sbin/reboot
+# --- 16. Passwordless service control for pj-monitor ---
+cat > /etc/sudoers.d/fossil-service << EOF
+${FOSSIL_USER} ALL=(ALL) NOPASSWD: /bin/systemctl start fossil-app.service
+${FOSSIL_USER} ALL=(ALL) NOPASSWD: /bin/systemctl stop fossil-app.service
 EOF
-chmod 440 /etc/sudoers.d/fossil-reboot
+chmod 440 /etc/sudoers.d/fossil-service
 
 # --- 17. Boot notification ---
 cat > /etc/systemd/system/boot-notify.service << EOF
@@ -379,6 +403,19 @@ EOF
 
     systemctl enable nut-server.service nut-driver@ups.service nut-monitor.service 2>/dev/null || true
 fi
+
+# --- 24. Log rotation ---
+cat > /etc/logrotate.d/fossil << 'EOF'
+/var/log/fossil.log {
+    daily
+    rotate 7
+    compress
+    missingok
+    notifempty
+    copytruncate
+    size 10M
+}
+EOF
 
 echo ""
 echo "=== Setup complete ==="
