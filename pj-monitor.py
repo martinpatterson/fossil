@@ -103,7 +103,11 @@ async def monitor():
     ip = config[MONITOR_PJ]["ip"]
     print(f"Monitoring {MONITOR_PJ} ({ip}) every {POLL_INTERVAL}s", flush=True)
 
-    last_state = None
+    # Default: app should be running (assume PJ on until proven off)
+    last_state = True
+    if not service_active():
+        print(f"Starting app (default on until PJ state known)", flush=True)
+        service_start()
     conn_failures = 0
 
     while True:
