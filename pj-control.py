@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""Projector control via Google TV Remote protocol (androidtvremote2).
+
+Usage:
+    pj-control.py <name|ip> status     - Power state and current app
+    pj-control.py <name|ip> on         - Turn on
+    pj-control.py <name|ip> off        - Turn off
+    pj-control.py <name|ip> pair       - Pair with projector (one-time)
+    pj-control.py list                 - List configured projectors
+
+Projectors are configured in pj-config.json:
+    {
+        "fossil-pj": {"ip": "10.0.0.10"},
+        "haste-pj":  {"ip": "10.0.0.11"}
+    }
+"""
+
+import asyncio
+import json
+import os
+import sys
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE = os.path.join(SCRIPT_DIR, "pj-config.json")
+CERT_DIR = os.path.join(SCRIPT_DIR, ".pj-certs")
+
+
+def load_config():
+    if not os.path.exists(CONFIG_FILE):
+        return {}
+    with open(CONFIG_FILE) as f:
+        return json.load(f)
+
+
+def resolve_target(name_or_ip):
+    config = load_config()
+    if name_or_ip in config:
+        return name_or_ip, config[name_or_ip]["ip"]
+    # Try matching by IP
+    for name, cfg in config.items():
+        if cfg["ip"] == name_or_ip:
+            return name, name_or_ip
+    # Use as raw IP with generated name
+    return name_or_ip.replace(".", "_"), name_or_ip
+
+
+def cert_paths(name):
+    os.makedirs(CERT_DIR, exist_ok=True)
+    return (
+        os.path.join(CERT_DIR, f"{name}-cert.pem"),
+        os.path.join(CERT_DIR, f"{name}-key.pem"),
+    )
+
+
+async def do_pair(name, ip):
+    from androidtvremote2 import AndroidTVRemote
+
+    certfile, keyfile = cert_paths(name)
+    remote = AndroidTVRemote("Fossil NUC", certfile, keyfile, ip)
+    await remote.async_generate_cert_if_missing()
+    await remote.async_start_pairing()
+    pin = input("Enter PIN from projector screen: ")
+    await remote.async_finish_pairing(pin.strip())
+    print(f"Paired with {name} ({ip}) successfully.")
+
+
+async def do_status(name, ip):
+    from androidtvremote2 import AndroidTVRemote
+
+    certfile, keyfile = cert_paths(name)
+    if not os.path.exists(certfile):
+        print(f"Not paired with {name}. Run: pj-control.py {name} pair")
+        sys.exit(1)
+    remote = AndroidTVRemote("Fossil NUC", certfile, keyfile, ip)
+    await remote.async_connect()
+    info = remote.device_info
+    power = remote.is_on
+    app = remote.current_app
+    print(f"Projector:  {name} ({ip})")
+    print(f"Model:      {info.get('manufacturer', '?')} {info.get('model', '?')}")
+    print(f"Software:   {info.get('sw_version', '?')}")
+    print(f"Power:      {'ON' if power else 'OFF'}")
+    print(f"Running:    {app or 'N/A'}")
+    remote.disconnect()
+
+
+async def do_power(name, ip, turn_on):
+    from androidtvremote2 import AndroidTVRemote
+
+    certfile, keyfile = cert_paths(name)
+    if not os.path.exists(certfile):
+        print(f"Not paired with {name}. Run: pj-control.py {name} pair")
+        sys.exit(1)
+    remote = AndroidTVRemote("Fossil NUC", certfile, keyfile, ip)
+    await remote.async_connect()
+    is_on = remote.is_on
+    if turn_on and is_on:
+        print(f"{name}: already on")
+    elif not turn_on and not is_on:
+        print(f"{name}: already off")
+    else:
+        remote.send_key_command("KEYCODE_POWER")
+        action = "on" if turn_on else "off"
+        print(f"{name}: turning {action}")
+    remote.disconnect()
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__)
+        sys.exit(1)
+
+    if sys.argv[1] == "list":
+        config = load_config()
+        if not config:
+            print("No projectors configured. Create pj-config.json")
+        for name, cfg in config.items():
+            certfile, _ = cert_paths(name)
+            paired = "paired" if os.path.exists(certfile) else "not paired"
+            print(f"  {name:15s} {cfg['ip']:15s} ({paired})")
+        sys.exit(0)
+
+    if len(sys.argv) < 3:
+        print(__doc__)
+        sys.exit(1)
+
+    target = sys.argv[1]
+    command = sys.argv[2].lower()
+    name, ip = resolve_target(target)
+
+    if command == "pair":
+        asyncio.run(do_pair(name, ip))
+    elif command == "status":
+        asyncio.run(do_status(name, ip))
+    elif command == "on":
+        asyncio.run(do_power(name, ip, True))
+    elif command == "off":
+        asyncio.run(do_power(name, ip, False))
+    else:
+        print(f"Unknown command: {command}")
+        print(__doc__)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
