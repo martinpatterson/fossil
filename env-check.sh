@@ -6,6 +6,7 @@ PO_TOKEN="avmrkpiuza87mcofkwn98s5prd2ukn"
 PO_USER="umhhs2kiz34wq91k76a1skjrq6vft5"
 REBOOT_STATE="/tmp/fossil-kinect-reboot"
 KINECT_FAIL_COUNT="/tmp/fossil-kinect-fails"
+ALERT_STATE="/tmp/fossil-alert-state"
 MAX_REBOOTS=3           # max reboots per window
 REBOOT_WINDOW=3600      # 1 hour window (seconds)
 MIN_UPTIME=300          # don't reboot if up < 5 min (let boot settle)
@@ -16,9 +17,9 @@ WARNINGS=""
 pushover() {
     local title="$1" msg="$2" pri="${3:-0}"
     curl -fsS -m 10 -X POST https://api.pushover.net/1/messages.json \
-        -d "token=${PO_TOKEN}" -d "user=${PO_USER}" \
-        -d "title=${title}" -d "message=${msg}" \
-        -d "priority=${pri}" -d "sound=siren" > /dev/null 2>&1
+        --data-urlencode "token=${PO_TOKEN}" --data-urlencode "user=${PO_USER}" \
+        --data-urlencode "title=${title}" --data-urlencode "message=${msg}" \
+        --data-urlencode "priority=${pri}" --data-urlencode "sound=siren" > /dev/null 2>&1
 }
 
 # --- CPU temperature (zone 1 = x86_pkg_temp) ---
@@ -26,6 +27,10 @@ TEMP=$(cat /sys/class/thermal/thermal_zone1/temp 2>/dev/null)
 TEMP_C=$((TEMP / 1000))
 if [ "$TEMP_C" -ge 85 ]; then
     WARNINGS="${WARNINGS}OVERHEAT: CPU at ${TEMP_C}C\n"
+    touch "$ALERT_STATE.temp"
+elif [ -f "$ALERT_STATE.temp" ]; then
+    pushover "Fossil NUC OK" "Temperature normal (${TEMP_C}C)." 0
+    rm -f "$ALERT_STATE.temp"
 fi
 
 # --- UPS power status ---
@@ -33,6 +38,10 @@ UPS_STATUS=$(upsc ups ups.status 2>/dev/null)
 if echo "$UPS_STATUS" | grep -q "OB"; then
     BATT=$(upsc ups battery.charge 2>/dev/null)
     WARNINGS="${WARNINGS}POWER LOSS: UPS on battery (${BATT}%)\n"
+    touch "$ALERT_STATE.power"
+elif [ -f "$ALERT_STATE.power" ]; then
+    pushover "Fossil NUC OK" "Mains power restored." 0
+    rm -f "$ALERT_STATE.power"
 fi
 
 # --- Disk space (warn at 90%) ---
@@ -95,8 +104,9 @@ if ! lsusb | grep -q '045e:097c'; then
         exit 0
     fi
 else
-    # Camera present — clear fail counter
+    # Camera present — notify recovery if it was previously missing
     if [ -f "$KINECT_FAIL_COUNT" ]; then
+        pushover "Fossil NUC OK" "Kinect depth camera recovered." 0
         rm -f "$KINECT_FAIL_COUNT"
     fi
 fi

@@ -266,27 +266,49 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 User=${FOSSIL_USER}
-ExecStart=/bin/bash -c 'sleep 10 && curl -fsS -m 10 -X POST https://api.pushover.net/1/messages.json -d "token=avmrkpiuza87mcofkwn98s5prd2ukn" -d "user=umhhs2kiz34wq91k76a1skjrq6vft5" -d "title=Fossil NUC" -d "message=System booted at \$(date)" -d "priority=0"'
+ExecStart=/bin/bash -c 'sleep 10 && curl -fsS -m 10 -X POST https://api.pushover.net/1/messages.json --data-urlencode "token=avmrkpiuza87mcofkwn98s5prd2ukn" --data-urlencode "user=umhhs2kiz34wq91k76a1skjrq6vft5" --data-urlencode "title=Fossil NUC" --data-urlencode "message=System booted at \$(date)" --data-urlencode "priority=0"'
 
 [Install]
 WantedBy=multi-user.target
 EOF
 systemctl enable boot-notify.service
 
-# --- 18. WiFi keepalive (prevent router ARP expiry) ---
+# --- 18. Shutdown notification ---
+cat > /etc/systemd/system/shutdown-notify.service << EOF
+[Unit]
+Description=Pushover shutdown notification
+DefaultDependencies=no
+Before=shutdown.target reboot.target halt.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'curl -fsS -m 10 -X POST https://api.pushover.net/1/messages.json --data-urlencode "token=avmrkpiuza87mcofkwn98s5prd2ukn" --data-urlencode "user=umhhs2kiz34wq91k76a1skjrq6vft5" --data-urlencode "title=Fossil NUC" --data-urlencode "message=System shutting down at \$(date)" --data-urlencode "priority=0"'
+
+[Install]
+WantedBy=halt.target reboot.target shutdown.target
+EOF
+systemctl enable shutdown-notify.service
+
+# --- 19. GRUB: skip menu on unclean shutdown ---
+if ! grep -q 'GRUB_RECORDFAIL_TIMEOUT' /etc/default/grub; then
+    echo 'GRUB_RECORDFAIL_TIMEOUT=0' >> /etc/default/grub
+    update-grub
+fi
+
+# --- 20. WiFi keepalive (prevent router ARP expiry) ---
 cat > /etc/cron.d/wifi-keepalive << 'EOF'
 # Ping gateway every minute to keep ARP table fresh on router
 * * * * * martin GW=$(ip route | awk '/default.*wlo1/{print $3}'); [ -n "$GW" ] && ping -c 1 -W 2 $GW > /dev/null 2>&1
 EOF
 chmod 644 /etc/cron.d/wifi-keepalive
 
-# --- 19. Force WiFi to 5GHz band (avoid 6GHz driver quirks) ---
+# --- 21. Force WiFi to 5GHz band (avoid 6GHz driver quirks) ---
 echo ""
 echo "--- Configuring WiFi band ---"
 nmcli connection show 2>/dev/null | grep -q "ANY" && \
     nmcli connection modify "ANY 1" 802-11-wireless.band a 2>/dev/null || true
 
-# --- 20. Private network (wired 10.0.0.x) ---
+# --- 22. Private network (wired 10.0.0.x) ---
 echo ""
 echo "--- Configuring private network ---"
 cat > /etc/hosts << EOF
@@ -304,7 +326,7 @@ EOF
 nmcli connection show "Wired connection 1" &>/dev/null && \
     nmcli connection modify "Wired connection 1" ipv4.method manual ipv4.addresses 10.0.0.1/24 ipv4.gateway "" ipv4.dns "" 2>/dev/null || true
 
-# --- 21. NUT UPS monitoring (driver/server only, no auto-shutdown) ---
+# --- 23. NUT UPS monitoring (driver/server only, no auto-shutdown) ---
 echo ""
 echo "--- Configuring UPS monitoring ---"
 if dpkg -l nut &>/dev/null; then
