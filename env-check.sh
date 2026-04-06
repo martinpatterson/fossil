@@ -33,15 +33,12 @@ elif [ -f "$ALERT_STATE.temp" ]; then
     rm -f "$ALERT_STATE.temp"
 fi
 
-# --- UPS power status ---
+# --- UPS power status (instant alerts handled by NUT/upsmon) ---
+# env-check still reports UPS status to healthchecks.io for logging
 UPS_STATUS=$(upsc ups ups.status 2>/dev/null)
 if echo "$UPS_STATUS" | grep -q "OB"; then
     BATT=$(upsc ups battery.charge 2>/dev/null)
     WARNINGS="${WARNINGS}POWER LOSS: UPS on battery (${BATT}%)\n"
-    touch "$ALERT_STATE.power"
-elif [ -f "$ALERT_STATE.power" ]; then
-    pushover "Fossil NUC OK" "Mains power restored." 0
-    rm -f "$ALERT_STATE.power"
 fi
 
 # --- Disk space (warn at 90%) ---

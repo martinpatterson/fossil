@@ -326,13 +326,58 @@ EOF
 nmcli connection show "Wired connection 1" &>/dev/null && \
     nmcli connection modify "Wired connection 1" ipv4.method manual ipv4.addresses 10.0.0.1/24 ipv4.gateway "" ipv4.dns "" 2>/dev/null || true
 
-# --- 23. NUT UPS monitoring (driver/server only, no auto-shutdown) ---
+# --- 23. NUT UPS monitoring (notifications only, no shutdown) ---
 echo ""
 echo "--- Configuring UPS monitoring ---"
 if dpkg -l nut &>/dev/null; then
     sed -i 's/MODE=none/MODE=standalone/' /etc/nut/nut.conf 2>/dev/null || true
-    systemctl enable nut-server.service nut-driver@ups.service 2>/dev/null || true
-    systemctl mask nut-monitor.service 2>/dev/null || true
+
+    # Notify script for instant Pushover alerts on power events
+    cat > /usr/local/bin/nut-notify.sh << 'NUTEOF'
+#!/bin/bash
+PO_TOKEN="avmrkpiuza87mcofkwn98s5prd2ukn"
+PO_USER="umhhs2kiz34wq91k76a1skjrq6vft5"
+curl -fsS -m 10 -X POST https://api.pushover.net/1/messages.json \
+    --data-urlencode "token=${PO_TOKEN}" --data-urlencode "user=${PO_USER}" \
+    --data-urlencode "title=Fossil UPS" --data-urlencode "message=$NOTIFYTYPE: $UPSNAME" \
+    --data-urlencode "priority=1" --data-urlencode "sound=siren" > /dev/null 2>&1
+NUTEOF
+    chmod 755 /usr/local/bin/nut-notify.sh
+
+    # upsmon: notifications only, shutdown disabled
+    cat > /etc/nut/upsmon.conf << 'EOF'
+MONITOR ups@localhost 1 admin fossil master
+SHUTDOWNCMD "/bin/true"
+POLLFREQ 5
+POLLFREQALERT 5
+HOSTSYNC 15
+DEADTIME 15
+RBWARNTIME 43200
+NOCOMMWARNTIME 300
+FINALDELAY 5
+
+NOTIFYCMD /usr/local/bin/nut-notify.sh
+
+NOTIFYFLAG ONLINE    EXEC
+NOTIFYFLAG ONBATT    EXEC
+NOTIFYFLAG LOWBATT   EXEC
+NOTIFYFLAG FSD       EXEC
+NOTIFYFLAG COMMOK    EXEC
+NOTIFYFLAG COMMBAD   EXEC
+NOTIFYFLAG REPLBATT  EXEC
+NOTIFYFLAG NOCOMM    EXEC
+
+NOTIFYMSG ONLINE    "Power restored - on mains"
+NOTIFYMSG ONBATT    "Power loss - on battery"
+NOTIFYMSG LOWBATT   "Battery low - critical"
+NOTIFYMSG FSD       "Forced shutdown"
+NOTIFYMSG COMMOK    "UPS communication restored"
+NOTIFYMSG COMMBAD   "UPS communication lost"
+NOTIFYMSG REPLBATT  "Battery needs replacement"
+NOTIFYMSG NOCOMM    "UPS not responding"
+EOF
+
+    systemctl enable nut-server.service nut-driver@ups.service nut-monitor.service 2>/dev/null || true
 fi
 
 echo ""
