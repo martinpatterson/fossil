@@ -9,7 +9,7 @@ KINECT_FAIL_COUNT="/tmp/fossil-kinect-fails"
 ALERT_STATE="/tmp/fossil-alert-state"
 MAX_REBOOTS=3           # max reboots per window
 REBOOT_WINDOW=3600      # 1 hour window (seconds)
-MIN_UPTIME=300          # don't reboot if up < 5 min (let boot settle)
+MIN_UPTIME=180          # don't reboot if up < 3 min (let boot settle)
 CONSEC_FAILS_NEEDED=1   # reboot on first check after boot settle
 WARNINGS=""
 
@@ -96,8 +96,9 @@ if ! lsusb | grep -q '045e:097c'; then
             [ $((NOW - ts)) -lt $REBOOT_WINDOW ] && echo "$ts"
         done < "$REBOOT_STATE" > "$tmpf"
         mv "$tmpf" "$REBOOT_STATE"
-        pushover "Fossil NUC Reboot" "Kinect depth camera missing after ${FAILS} checks. Rebooting (attempt $((RECENT + 1))/${MAX_REBOOTS})." 1
-        sudo reboot
+        pushover "Fossil NUC Power Cycle" "Kinect depth camera missing after ${FAILS} checks. Power cycling via ezOutlet5 (attempt $((RECENT + 1))/${MAX_REBOOTS})." 1
+        # Hard power cycle via ezOutlet5 — cuts AC, waits, restores
+        curl -fsS -m 10 -u admin:1AA51F "http://10.0.0.2/overview?reset=Reset" > /dev/null 2>&1
         exit 0
     fi
 else

@@ -1,5 +1,7 @@
 #!/bin/bash
-# Fossil kiosk session — minimal window manager for keyboard focus
+# Fossil kiosk X session — sets up display environment only
+# App lifecycle is managed by pj-monitor.service → fossil-app.service
+
 # Disable ALL screen blanking and power management
 xset s off
 xset s noblank
@@ -16,25 +18,14 @@ xsetroot -solid white
 # Start minimal window manager (handles focus, no decorations)
 matchbox-window-manager -use_titlebar no -use_cursor no &
 
-# Run fossil with auto-restart
-cd /home/martin/fossil
-source .venv/bin/activate
+# Export display info for fossil-app.service
+echo "DISPLAY=$DISPLAY" > /tmp/fossil-display-env
+echo "XAUTHORITY=$XAUTHORITY" >> /tmp/fossil-display-env
+chmod 644 /tmp/fossil-display-env
 
+echo "$(date): X session ready (DISPLAY=$DISPLAY)"
+
+# Keep session alive
 while true; do
-    echo "$(date): Starting Fossil..."
-    timeout 86400 python main.py
-    EXIT_CODE=$?
-    pkill -9 -f "python.*main.py" 2>/dev/null
-    sleep 1
-
-    if [ $EXIT_CODE -eq 124 ]; then
-        echo "$(date): Scheduled restart (24h)..."
-        sleep 3
-    elif [ $EXIT_CODE -eq 75 ]; then
-        echo "$(date): Sensor failure, restarting in 5s..."
-        sleep 4
-    else
-        echo "$(date): Exit ($EXIT_CODE), restarting in 10s..."
-        sleep 9
-    fi
+    sleep 3600
 done
