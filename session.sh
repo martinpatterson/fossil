@@ -13,7 +13,7 @@ xset dpms 0 0 0
 unclutter -idle 0.5 -root &
 
 # Set background to white
-xsetroot -solid white
+xsetroot -solid black
 
 # Start minimal window manager (handles focus, no decorations)
 matchbox-window-manager -use_titlebar no -use_cursor no &

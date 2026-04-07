@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Monitor projector state and control fossil-app.service.
 
-Single authority for fossil app lifecycle:
-- PJ responds ON  → start fossil-app.service
-- PJ responds OFF → stop fossil-app.service
-- PJ unreachable  → no change, alert after 3 failures
-- App crashed while PJ ON → restart fossil-app.service
+Watchdog model: app is ALWAYS running by default.
+Only a confirmed, active OFF signal from the projector stops the app.
+The moment that signal is lost (unreachable, error, IP change),
+the app returns to running.
 
 Runs as pj-monitor.service (systemd), independent of X session.
 """
@@ -75,6 +74,22 @@ def service_stop():
     )
 
 
+def ensure_running():
+    """App should be running — start it if it's not."""
+    if not service_active():
+        service_start()
+        return True
+    return False
+
+
+def ensure_stopped():
+    """App should be stopped — stop it if it's running."""
+    if service_active():
+        service_stop()
+        return True
+    return False
+
+
 async def monitor():
     from androidtvremote2 import AndroidTVRemote
     from androidtvremote2.exceptions import CannotConnect, ConnectionClosed
@@ -89,77 +104,77 @@ async def monitor():
     keyfile = os.path.join(CERT_DIR, f"{MONITOR_PJ}-key.pem")
     print(f"Monitoring {MONITOR_PJ} ({ip}) every {POLL_INTERVAL}s", flush=True)
 
-    # Default: app should be running (assume PJ on until proven off)
-    last_state = True
-    if not service_active():
-        print(f"Starting app (default on until PJ state known)", flush=True)
-        service_start()
-    conn_failures = 0
-    off_since = None  # timestamp when PJ first went OFF/unreachable
-    OFF_TIMEOUT = 120  # seconds — if OFF/unreachable this long, start app
+    # App always starts running
+    ensure_running()
+    print("App started (default state)", flush=True)
+
+    last_confirmed_off = False
+    notified_unreachable = False
     remote = None
 
+    def on_is_on_updated(is_on):
+        """Instant callback when PJ power state changes."""
+        nonlocal last_confirmed_off, notified_unreachable
+        if is_on:
+            if last_confirmed_off:
+                print(f"{MONITOR_PJ}: ON (callback) — starting app", flush=True)
+                pushover("Fossil PJ Monitor", f"{MONITOR_PJ} ON — app started")
+            last_confirmed_off = False
+            notified_unreachable = False
+            ensure_running()
+        else:
+            if not last_confirmed_off:
+                print(f"{MONITOR_PJ}: OFF (callback) — stopping app", flush=True)
+                pushover("Fossil PJ Monitor", f"{MONITOR_PJ} OFF — app stopped")
+            last_confirmed_off = True
+            notified_unreachable = False
+            ensure_stopped()
+
     while True:
-        power = None
-        try:
-            if remote is None:
+        # Maintain connection — reconnect if lost
+        if remote is None:
+            try:
                 remote = AndroidTVRemote("Fossil NUC", certfile, keyfile, ip)
+                remote.add_is_on_updated_callback(on_is_on_updated)
                 await remote.async_connect()
                 await asyncio.sleep(1)
-            power = remote.is_on
-        except (CannotConnect, ConnectionClosed, OSError) as e:
-            print(f"  PJ connection error: {e}", flush=True)
-            remote = None
-        except Exception as e:
-            print(f"  PJ unexpected error: {e}", flush=True)
-            remote = None
+                # Read initial state
+                if remote._transport and not remote._transport.is_closing():
+                    power = remote.is_on
+                    if power is True:
+                        if last_confirmed_off:
+                            print(f"{MONITOR_PJ}: ON — starting app", flush=True)
+                            pushover("Fossil PJ Monitor", f"{MONITOR_PJ} ON — app started")
+                        last_confirmed_off = False
+                        ensure_running()
+                    elif power is False:
+                        if not last_confirmed_off:
+                            print(f"{MONITOR_PJ}: OFF — stopping app", flush=True)
+                            pushover("Fossil PJ Monitor", f"{MONITOR_PJ} OFF — app stopped")
+                        last_confirmed_off = True
+                        ensure_stopped()
+                    notified_unreachable = False
+                else:
+                    remote = None
+            except Exception:
+                remote = None
+        else:
+            # Check connection still alive
+            if not remote._transport or remote._transport.is_closing():
+                print(f"{MONITOR_PJ}: connection lost", flush=True)
+                remote = None
 
-        if power is None:
-            conn_failures += 1
-            if conn_failures == 3 and off_since is None:
-                print(f"{MONITOR_PJ}: unreachable — app unchanged", flush=True)
+        # If no connection, treat as unreachable — watchdog: app runs
+        if remote is None:
+            if not notified_unreachable:
+                print(f"{MONITOR_PJ}: unreachable", flush=True)
                 pushover("Fossil PJ Monitor", f"Cannot reach {MONITOR_PJ} ({ip})")
-            # If we were OFF and now unreachable, check timeout
-            if off_since is not None:
-                import time
-                elapsed = time.monotonic() - off_since
-                if elapsed >= OFF_TIMEOUT and not service_active():
-                    print(f"{MONITOR_PJ}: OFF/unreachable {int(elapsed)}s — starting app", flush=True)
-                    service_start()
-                    off_since = None
-                    last_state = None
-                    pushover("Fossil PJ Monitor", f"{MONITOR_PJ} OFF/unreachable {int(elapsed)}s — app started")
-            await asyncio.sleep(POLL_INTERVAL)
-            continue
-
-        conn_failures = 0
-
-        if power != last_state:
-            if power:
-                # Projector ON → start app
-                print(f"{MONITOR_PJ}: ON — starting app", flush=True)
-                off_since = None
-                if not service_active():
-                    service_start()
-                pushover("Fossil PJ Monitor", f"{MONITOR_PJ} ON — app started")
-            else:
-                # Projector OFF → stop app
-                import time
-                if off_since is None:
-                    off_since = time.monotonic()
-                print(f"{MONITOR_PJ}: OFF — stopping app", flush=True)
-                if service_active():
-                    service_stop()
-                pushover("Fossil PJ Monitor", f"{MONITOR_PJ} OFF — app stopped")
-            last_state = power
-        elif power is False:
-            # Still OFF — keep tracking but don't re-notify
-            pass
-        elif power and not service_active():
-            # PJ is on but app crashed — restart it
-            print(f"{MONITOR_PJ}: app crashed — restarting", flush=True)
-            service_start()
-            pushover("Fossil PJ Monitor", "App crashed — restarting")
+                notified_unreachable = True
+            if last_confirmed_off:
+                print(f"{MONITOR_PJ}: lost OFF signal — starting app", flush=True)
+                pushover("Fossil PJ Monitor", f"Lost {MONITOR_PJ} — app started")
+                last_confirmed_off = False
+            ensure_running()
 
         await asyncio.sleep(POLL_INTERVAL)
 
