@@ -115,9 +115,17 @@ async def monitor():
         if power is None:
             conn_failures += 1
             if conn_failures == 3:
-                print(f"{MONITOR_PJ}: unreachable — app unchanged", flush=True)
-                pushover("Fossil PJ Monitor", f"Cannot reach {MONITOR_PJ} ({ip})")
-            # Never change app state on connection failure
+                if last_state is False:
+                    # PJ was confirmed OFF but now unreachable — may have
+                    # come back on a different IP. Start app to be safe.
+                    print(f"{MONITOR_PJ}: unreachable after OFF — starting app", flush=True)
+                    if not service_active():
+                        service_start()
+                    last_state = None
+                    pushover("Fossil PJ Monitor", f"Cannot reach {MONITOR_PJ} ({ip}) after OFF — app started")
+                else:
+                    print(f"{MONITOR_PJ}: unreachable — app unchanged", flush=True)
+                    pushover("Fossil PJ Monitor", f"Cannot reach {MONITOR_PJ} ({ip})")
             await asyncio.sleep(POLL_INTERVAL)
             continue
 
