@@ -115,9 +115,15 @@ if [ -n "$SIGNAL" ] && [ "$SIGNAL" -le -70 ]; then
     WARNINGS="${WARNINGS}WIFI: Weak signal (${SIGNAL} dBm)\n"
 fi
 
-# --- App running ---
+# --- App running (skip if pj-monitor intentionally stopped it) ---
 if ! pgrep -f 'python.*main.py' > /dev/null; then
-    WARNINGS="${WARNINGS}APP: Fossil not running\n"
+    PJ_MANAGING=$(systemctl is-active pj-monitor.service 2>/dev/null)
+    APP_STATE=$(systemctl show fossil-app.service -p SubState --value 2>/dev/null)
+    if [ "$PJ_MANAGING" = "active" ] && [ "$APP_STATE" = "dead" ]; then
+        : # pj-monitor stopped app cleanly (PJ off) — not an error
+    else
+        WARNINGS="${WARNINGS}APP: Fossil not running\n"
+    fi
 fi
 
 # --- Send result ---
