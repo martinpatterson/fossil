@@ -95,6 +95,8 @@ async def monitor():
         print(f"Starting app (default on until PJ state known)", flush=True)
         service_start()
     conn_failures = 0
+    off_since = None  # timestamp when PJ first went OFF/unreachable
+    OFF_TIMEOUT = 120  # seconds — if OFF/unreachable this long, start app
     remote = None
 
     while True:
@@ -114,18 +116,19 @@ async def monitor():
 
         if power is None:
             conn_failures += 1
-            if conn_failures == 3:
-                if last_state is False:
-                    # PJ was confirmed OFF but now unreachable — may have
-                    # come back on a different IP. Start app to be safe.
-                    print(f"{MONITOR_PJ}: unreachable after OFF — starting app", flush=True)
-                    if not service_active():
-                        service_start()
+            if conn_failures == 3 and off_since is None:
+                print(f"{MONITOR_PJ}: unreachable — app unchanged", flush=True)
+                pushover("Fossil PJ Monitor", f"Cannot reach {MONITOR_PJ} ({ip})")
+            # If we were OFF and now unreachable, check timeout
+            if off_since is not None:
+                import time
+                elapsed = time.monotonic() - off_since
+                if elapsed >= OFF_TIMEOUT and not service_active():
+                    print(f"{MONITOR_PJ}: OFF/unreachable {int(elapsed)}s — starting app", flush=True)
+                    service_start()
+                    off_since = None
                     last_state = None
-                    pushover("Fossil PJ Monitor", f"Cannot reach {MONITOR_PJ} ({ip}) after OFF — app started")
-                else:
-                    print(f"{MONITOR_PJ}: unreachable — app unchanged", flush=True)
-                    pushover("Fossil PJ Monitor", f"Cannot reach {MONITOR_PJ} ({ip})")
+                    pushover("Fossil PJ Monitor", f"{MONITOR_PJ} OFF/unreachable {int(elapsed)}s — app started")
             await asyncio.sleep(POLL_INTERVAL)
             continue
 
@@ -135,16 +138,23 @@ async def monitor():
             if power:
                 # Projector ON → start app
                 print(f"{MONITOR_PJ}: ON — starting app", flush=True)
+                off_since = None
                 if not service_active():
                     service_start()
                 pushover("Fossil PJ Monitor", f"{MONITOR_PJ} ON — app started")
             else:
                 # Projector OFF → stop app
+                import time
+                if off_since is None:
+                    off_since = time.monotonic()
                 print(f"{MONITOR_PJ}: OFF — stopping app", flush=True)
                 if service_active():
                     service_stop()
                 pushover("Fossil PJ Monitor", f"{MONITOR_PJ} OFF — app stopped")
             last_state = power
+        elif power is False:
+            # Still OFF — keep tracking but don't re-notify
+            pass
         elif power and not service_active():
             # PJ is on but app crashed — restart it
             print(f"{MONITOR_PJ}: app crashed — restarting", flush=True)
