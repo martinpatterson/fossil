@@ -109,11 +109,6 @@ else
     fi
 fi
 
-# --- WiFi signal (warn below -70 dBm) ---
-SIGNAL=$(iwconfig wlo1 2>/dev/null | grep -oP 'Signal level=\K-?[0-9]+')
-if [ -n "$SIGNAL" ] && [ "$SIGNAL" -le -70 ]; then
-    WARNINGS="${WARNINGS}WIFI: Weak signal (${SIGNAL} dBm)\n"
-fi
 
 # --- App running (skip if pj-monitor intentionally stopped it) ---
 if ! pgrep -f 'python.*main.py' > /dev/null; then
