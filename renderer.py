@@ -83,14 +83,14 @@ class Renderer:
             [(self.vbo, "2f 2f", "in_position", "in_uv")],
         )
 
-        # Label quad (bottom center strip)
+        # Label quad (top center strip)
         label_h = 0.12
         label_verts = np.array(
             [
-                -0.4, -1.0,           0.0, 0.0,
-                 0.4, -1.0,           1.0, 0.0,
-                -0.4, -1.0 + label_h, 0.0, 1.0,
-                 0.4, -1.0 + label_h, 1.0, 1.0,
+                -0.4, 1.0 - label_h, 0.0, 0.0,
+                 0.4, 1.0 - label_h, 1.0, 0.0,
+                -0.4, 1.0,           0.0, 1.0,
+                 0.4, 1.0,           1.0, 1.0,
             ],
             dtype="f4",
         )
@@ -100,40 +100,52 @@ class Renderer:
             [(self.label_vbo, "2f 2f", "in_position", "in_uv")],
         )
 
-        # Load fossil photograph — letterbox to preserve aspect ratio
-        asset_path = os.path.join(os.path.dirname(__file__), "assets", "fossil.png")
-        img = Image.open(asset_path).convert("RGB")
-        img.thumbnail((self.width, self.height), Image.LANCZOS)
-        # Center on white background at render resolution
-        canvas = Image.new("RGB", (self.width, self.height), (255, 255, 255))
-        paste_x = (self.width - img.width) // 2
-        paste_y = (self.height - img.height) // 2
-        canvas.paste(img, (paste_x, paste_y))
-        img = canvas
-        img = img.transpose(Image.FLIP_TOP_BOTTOM)
+        # Load background images from assets/backgrounds/ (or fall back to fossil.png)
+        bg_dir = os.path.join(os.path.dirname(__file__), "assets", "backgrounds")
+        self._bg_images = []
+        if os.path.isdir(bg_dir):
+            for f in sorted(os.listdir(bg_dir)):
+                if f.lower().endswith((".png", ".jpg", ".jpeg")):
+                    self._bg_images.append(os.path.join(bg_dir, f))
+        if not self._bg_images:
+            # Fallback to fossil.png / fossil2.png
+            for name in ("fossil.png", "fossil2.png"):
+                p = os.path.join(os.path.dirname(__file__), "assets", name)
+                if os.path.exists(p):
+                    self._bg_images.append(p)
+        print(f"Backgrounds: {len(self._bg_images)} images loaded")
+
+        self._bg_hold = 30.0    # seconds to hold each image
+        self._bg_fade = 10.0    # seconds to crossfade between images
+        self._bg_cycle = self._bg_hold + self._bg_fade
+        self._bg_idx = 0        # current background index
+
+        # Load first two backgrounds into textures
+        def load_bg(path):
+            img = Image.open(path).convert("RGB")
+            img.thumbnail((self.width, self.height), Image.LANCZOS)
+            canvas = Image.new("RGB", (self.width, self.height), (255, 255, 255))
+            px = (self.width - img.width) // 2
+            py = (self.height - img.height) // 2
+            canvas.paste(img, (px, py))
+            return canvas.transpose(Image.FLIP_TOP_BOTTOM)
+
+        self._load_bg = load_bg
+
+        img0 = load_bg(self._bg_images[0])
         self.fossil_tex = ctx.texture(
-            (self.width, self.height), 3, img.tobytes()
+            (self.width, self.height), 3, img0.tobytes()
         )
         self.fossil_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
 
-        # Load second fossil photograph for crossfade
-        asset_path2 = os.path.join(os.path.dirname(__file__), "assets", "fossil2.png")
-        if os.path.exists(asset_path2):
-            img2 = Image.open(asset_path2).convert("RGB")
-            img2.thumbnail((self.width, self.height), Image.LANCZOS)
-            canvas2 = Image.new("RGB", (self.width, self.height), (255, 255, 255))
-            paste_x2 = (self.width - img2.width) // 2
-            paste_y2 = (self.height - img2.height) // 2
-            canvas2.paste(img2, (paste_x2, paste_y2))
-            img2 = canvas2
-            img2 = img2.transpose(Image.FLIP_TOP_BOTTOM)
-        else:
-            img2 = img  # fallback to same image
+        next_idx = 1 % len(self._bg_images)
+        img1 = load_bg(self._bg_images[next_idx])
         self.fossil2_tex = ctx.texture(
-            (self.width, self.height), 3, img2.tobytes()
+            (self.width, self.height), 3, img1.tobytes()
         )
         self.fossil2_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
-        self._fossil_blend_start = time.time()
+        self._bg_next_idx = next_idx
+        self._bg_start = time.time()
 
         # Silhouette texture
         blank = np.zeros((self.height, self.width), dtype="f4")
@@ -269,16 +281,32 @@ class Renderer:
         self.passthrough_vao.render(moderngl.TRIANGLE_STRIP)
 
     def render(self):
-        # Update fossil image crossfade (60s hold, 4s fade, 128s cycle)
-        t = (time.time() - self._fossil_blend_start) % 128.0
-        if t < 60.0:
+        # Update background crossfade (cycle through all backgrounds)
+        t = time.time() - self._bg_start
+        cycle_t = t % self._bg_cycle
+        if cycle_t < self._bg_hold:
             blend = 0.0
-        elif t < 64.0:
-            blend = (t - 60.0) / 4.0
-        elif t < 124.0:
-            blend = 1.0
         else:
-            blend = 1.0 - (t - 124.0) / 4.0
+            blend = (cycle_t - self._bg_hold) / self._bg_fade
+
+        # When a full cycle completes, advance to next image
+        cycle_num = int(t / self._bg_cycle)
+        expected_idx = cycle_num % len(self._bg_images)
+        if expected_idx != self._bg_idx:
+            # Current fade finished — swap textures and load next
+            self._bg_idx = expected_idx
+            # fossil_tex becomes what fossil2_tex was showing
+            self.fossil_tex.write(self.fossil2_tex.read())
+            # Load next image into fossil2_tex
+            self._bg_next_idx = (self._bg_idx + 1) % len(self._bg_images)
+            next_img = self._load_bg(self._bg_images[self._bg_next_idx])
+            self.fossil2_tex.write(next_img.tobytes())
+            # Show original filename as label
+            name = os.path.splitext(os.path.basename(self._bg_images[self._bg_idx]))[0]
+            self._render_label(name)
+            print(f"Background: {name}", flush=True)
+            self._label_time = time.time()
+
         self.composite_prog["u_fossil_blend"].value = blend
 
         # Pass 1: composite
