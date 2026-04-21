@@ -21,8 +21,8 @@ CONFIG_FILE = os.path.join(SCRIPT_DIR, "pj-config.json")
 CERT_DIR = os.path.join(SCRIPT_DIR, ".pj-certs")
 POLL_INTERVAL = 15  # seconds
 
-# Which projector to monitor — change when fossil-pj is available
-MONITOR_PJ = "haste-pj"
+# Which projector to monitor (app lifecycle follows this projector)
+MONITOR_PJ = "fossil-pj"
 
 # Pushover config
 PO_TOKEN = "avmrkpiuza87mcofkwn98s5prd2ukn"

@@ -1,4 +1,9 @@
 {
     "fossil-pj": {"ip": "10.0.0.10"},
-    "haste-pj":  {"ip": "10.0.0.11"}
+    "haste-pj":  {"ip": "10.0.0.11"},
+    "buttons": {
+        "fossil": "",
+        "haste":  "",
+        "bloom":  ""
+    }
 }

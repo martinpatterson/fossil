@@ -135,7 +135,9 @@ sudo -u ${FOSSIL_USER} "${FOSSIL_DIR}/.venv/bin/pip" install \
     soundfile \
     scipy \
     rplidar-roboticia \
-    androidtvremote2
+    androidtvremote2 \
+    bleak \
+    python-kasa
 
 # --- 8. Systemd services ---
 echo ""
@@ -188,12 +190,39 @@ StandardError=append:/var/log/fossil.log
 WantedBy=multi-user.target
 EOF
 
+# button-monitor.service — Shelly BLU button dispatcher (BLE)
+cat > /etc/systemd/system/button-monitor.service << EOF
+[Unit]
+Description=Shelly BLU button dispatcher
+After=bluetooth.service network-online.target
+Wants=bluetooth.service network-online.target
+
+[Service]
+Type=simple
+User=${FOSSIL_USER}
+Group=${FOSSIL_USER}
+WorkingDirectory=${FOSSIL_DIR}
+ExecStart=${FOSSIL_DIR}/.venv/bin/python ${FOSSIL_DIR}/button-monitor.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/fossil.log
+StandardError=append:/var/log/fossil.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 touch /var/log/fossil.log
 chown ${FOSSIL_USER}:${FOSSIL_USER} /var/log/fossil.log
+
+# Re-enable bluetooth for BLE scanning (disabled earlier for cleanliness)
+systemctl unmask bluetooth.service 2>/dev/null || true
+systemctl enable bluetooth.service
 
 systemctl daemon-reload
 systemctl disable fossil.service 2>/dev/null || true
 systemctl enable pj-monitor.service
+systemctl enable button-monitor.service
 
 # --- 9. Audio: set analog output to max ---
 echo ""
