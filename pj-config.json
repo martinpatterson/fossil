@@ -3,7 +3,7 @@
     "haste-pj":  {"ip": "10.0.0.11"},
     "buttons": {
         "fossil": "",
-        "haste":  "",
-        "bloom":  ""
+        "haste":  "DC:8E:95:02:39:65",
+        "bloom":  "B0:C7:DE:C2:5B:74"
     }
 }

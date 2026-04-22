@@ -115,10 +115,19 @@ class Renderer:
                     self._bg_images.append(p)
         print(f"Backgrounds: {len(self._bg_images)} images loaded")
 
-        self._bg_hold = 30.0    # seconds to hold each image
-        self._bg_fade = 10.0    # seconds to crossfade between images
-        self._bg_cycle = self._bg_hold + self._bg_fade
+        # Per-image hold time. Burton_2/3/4 hold 20s, others hold 60s.
+        # Crossfade is 5s for all.
+        self._bg_fade = 5.0
+
+        def hold_for(path):
+            base = os.path.basename(path)
+            if base.startswith(("Burton_2", "Burton_3", "Burton_4")):
+                return 20.0
+            return 60.0
+
+        self._bg_hold_for = hold_for
         self._bg_idx = 0        # current background index
+        self._bg_show_start = time.time()  # when current image started holding
 
         # Load first two backgrounds into textures
         def load_bg(path):
@@ -145,7 +154,6 @@ class Renderer:
         )
         self.fossil2_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
         self._bg_next_idx = next_idx
-        self._bg_start = time.time()
 
         # Silhouette texture
         blank = np.zeros((self.height, self.width), dtype="f4")
@@ -281,31 +289,25 @@ class Renderer:
         self.passthrough_vao.render(moderngl.TRIANGLE_STRIP)
 
     def render(self):
-        # Update background crossfade (cycle through all backgrounds)
-        t = time.time() - self._bg_start
-        cycle_t = t % self._bg_cycle
-        if cycle_t < self._bg_hold:
+        # Per-image background crossfade. Each image has its own hold time
+        # followed by a shared fade duration to the next image.
+        hold = self._bg_hold_for(self._bg_images[self._bg_idx])
+        elapsed = time.time() - self._bg_show_start
+        if elapsed < hold:
             blend = 0.0
+        elif elapsed < hold + self._bg_fade:
+            blend = (elapsed - hold) / self._bg_fade
         else:
-            blend = (cycle_t - self._bg_hold) / self._bg_fade
-
-        # When a full cycle completes, advance to next image
-        cycle_num = int(t / self._bg_cycle)
-        expected_idx = cycle_num % len(self._bg_images)
-        if expected_idx != self._bg_idx:
-            # Current fade finished — swap textures and load next
-            self._bg_idx = expected_idx
-            # fossil_tex becomes what fossil2_tex was showing
+            # Fade complete — advance to next image
+            self._bg_idx = (self._bg_idx + 1) % len(self._bg_images)
+            self._bg_show_start = time.time()
             self.fossil_tex.write(self.fossil2_tex.read())
-            # Load next image into fossil2_tex
             self._bg_next_idx = (self._bg_idx + 1) % len(self._bg_images)
             next_img = self._load_bg(self._bg_images[self._bg_next_idx])
             self.fossil2_tex.write(next_img.tobytes())
-            # Show original filename as label
             name = os.path.splitext(os.path.basename(self._bg_images[self._bg_idx]))[0]
-            self._render_label(name)
-            print(f"Background: {name}", flush=True)
-            self._label_time = time.time()
+            print(f"Background: {name} (hold {self._bg_hold_for(self._bg_images[self._bg_idx]):.0f}s)", flush=True)
+            blend = 0.0
 
         self.composite_prog["u_fossil_blend"].value = blend
 

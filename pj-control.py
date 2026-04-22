@@ -102,6 +102,8 @@ async def do_power(name, ip, turn_on):
         remote.send_key_command("KEYCODE_POWER")
         action = "on" if turn_on else "off"
         print(f"{name}: turning {action}")
+        # send_key_command is async/buffered; wait for it to flush before disconnect
+        await asyncio.sleep(1.0)
     remote.disconnect()
 
 
