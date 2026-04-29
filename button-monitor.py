@@ -170,9 +170,8 @@ def wire(listener: ShellyBluListener, buttons: dict[str, str]) -> int:
             log.warning("Button %r: unknown role, skipping", role)
             continue
         on_action, off_action = ROLES[role]
-        for event in ("single", "triple"):
-            listener.on(mac, event, on_action)
-        for event in ("double", "long"):
+        listener.on(mac, "single", on_action)
+        for event in ("double", "triple", "long"):
             listener.on(mac, event, off_action)
         log.info("Button %r -> %s", role, mac.upper())
         count += 1
