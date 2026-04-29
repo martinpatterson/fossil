@@ -5,3 +5,4 @@ screenshot_*.png
 *.tif
 secrets.env
 .pj-certs/
+data/

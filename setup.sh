@@ -137,7 +137,9 @@ sudo -u ${FOSSIL_USER} "${FOSSIL_DIR}/.venv/bin/pip" install \
     rplidar-roboticia \
     androidtvremote2 \
     bleak \
-    python-kasa
+    python-kasa \
+    zeroconf \
+    Flask
 
 # --- 8. Systemd services ---
 echo ""
@@ -212,6 +214,32 @@ StandardError=append:/var/log/fossil.log
 WantedBy=multi-user.target
 EOF
 
+# fossil-stats.service — read-only web frontend for footstep counts
+cat > /etc/systemd/system/fossil-stats.service << EOF
+[Unit]
+Description=Fossil footstep stats web frontend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${FOSSIL_USER}
+Group=${FOSSIL_USER}
+WorkingDirectory=${FOSSIL_DIR}
+ExecStart=${FOSSIL_DIR}/.venv/bin/python ${FOSSIL_DIR}/stats_server.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/fossil.log
+StandardError=append:/var/log/fossil.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Persistent data directory (footstep counter SQLite DB)
+mkdir -p ${FOSSIL_DIR}/data
+chown ${FOSSIL_USER}:${FOSSIL_USER} ${FOSSIL_DIR}/data
+
 touch /var/log/fossil.log
 chown ${FOSSIL_USER}:${FOSSIL_USER} /var/log/fossil.log
 
@@ -223,6 +251,7 @@ systemctl daemon-reload
 systemctl disable fossil.service 2>/dev/null || true
 systemctl enable pj-monitor.service
 systemctl enable button-monitor.service
+systemctl enable fossil-stats.service
 
 # --- 9. Audio: set analog output to max ---
 echo ""

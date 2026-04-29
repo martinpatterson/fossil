@@ -25,6 +25,49 @@ CONFIG_FILE = os.path.join(SCRIPT_DIR, "pj-config.json")
 CERT_DIR = os.path.join(SCRIPT_DIR, ".pj-certs")
 
 
+def _local_ip_for(target_ip: str) -> str | None:
+    """Return the local IP that would route to target_ip (for mDNS interface selection)."""
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect((target_ip, 1))
+        local = s.getsockname()[0]
+        s.close()
+        return local
+    except Exception:
+        return None
+
+
+async def cast_wake(ip: str, timeout: float = 3.0) -> None:
+    """Send mDNS Google Cast discovery to wake a device out of Wake-on-Cast standby.
+
+    The device's network chip pattern-matches mDNS queries for
+    _googlecast._tcp.local and wakes the SoC. This works even when
+    the IP stack is down (ping fails) because it operates at the NIC
+    pattern-match level.
+
+    Binds to the interface that routes to ip so the multicast query
+    goes out the correct network.
+    """
+    local_ip = _local_ip_for(ip)
+    try:
+        from zeroconf.asyncio import AsyncZeroconf, AsyncServiceBrowser
+    except ImportError:
+        return
+    try:
+        kwargs = {}
+        if local_ip:
+            kwargs["interfaces"] = [local_ip]
+        zc = AsyncZeroconf(**kwargs)
+        browser = AsyncServiceBrowser(zc.zeroconf, "_googlecast._tcp.local.",
+                                       handlers=[lambda *a, **k: None])
+        await asyncio.sleep(timeout)
+        await browser.async_cancel()
+        await zc.async_close()
+    except Exception as e:
+        print(f"cast_wake error: {e}", file=sys.stderr)
+
+
 def load_config():
     if not os.path.exists(CONFIG_FILE):
         return {}
@@ -86,13 +129,26 @@ async def do_status(name, ip):
 
 async def do_power(name, ip, turn_on):
     from androidtvremote2 import AndroidTVRemote
+    from androidtvremote2.exceptions import CannotConnect
 
     certfile, keyfile = cert_paths(name)
     if not os.path.exists(certfile):
         print(f"Not paired with {name}. Run: pj-control.py {name} pair")
         sys.exit(1)
     remote = AndroidTVRemote("Fossil NUC", certfile, keyfile, ip)
-    await remote.async_connect()
+    # When turning on, projector may be in Wake-on-Cast standby; send mDNS
+    # query first to wake the network stack before attempting TCP connect.
+    if turn_on:
+        try:
+            await asyncio.wait_for(remote.async_connect(), timeout=3.0)
+        except (CannotConnect, asyncio.TimeoutError):
+            print(f"{name}: unreachable — sending cast wake...")
+            await cast_wake(ip, timeout=4.0)
+            # Retry after wake
+            remote = AndroidTVRemote("Fossil NUC", certfile, keyfile, ip)
+            await remote.async_connect()
+    else:
+        await remote.async_connect()
     is_on = remote.is_on
     if turn_on and is_on:
         print(f"{name}: already on")

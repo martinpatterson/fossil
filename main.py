@@ -52,6 +52,7 @@ from renderer import Renderer, EFFECT_NAMES
 from audio import AudioEngine
 from lidar import LidarTracker
 from footstep_vis import FootstepVis
+from step_counter import StepCounter
 
 
 def main():
@@ -93,6 +94,7 @@ def main():
 
     footstep_vis = FootstepVis(render_w, render_h)
     show_footstep_vis = False
+    step_counter = StepCounter()
 
     fade_rate = config.FADE_RATE
     trace_intensity = config.TRACE_INTENSITY
@@ -254,6 +256,7 @@ def main():
         for step in step_events:
             audio.trigger(step.x_mm, step.y_mm)
             footstep_vis.record_trigger(step.x_mm, step.y_mm, step.y_mm)
+            step_counter.record()
         audio.update()
 
         if show_footstep_vis:
@@ -283,6 +286,7 @@ def main():
     lidar.close()
     audio.close()
     kinect.close()
+    step_counter.close()
     pygame.quit()
     if restart:
         sys.exit(75)  # signal wrapper to restart

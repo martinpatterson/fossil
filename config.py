@@ -62,3 +62,8 @@ AUDIO_MIN_INTERVAL_MS   = 120
 AUDIO_IDLE_TIMEOUT_SEC  = 2.0
 AUDIO_FADE_OUT_SEC      = 0.5
 SLOT_MATCH_THRESHOLD_PX = 200
+
+# ── Footstep Counter ───────────────────────────────────────────────────────
+STEP_COUNTER_ENABLED    = True
+STEP_COUNTER_DB         = "data/footsteps.db"
+STEP_COUNTER_FLUSH_SEC  = 30        # background flush interval to SQLite

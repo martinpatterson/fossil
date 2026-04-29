@@ -9,3 +9,8 @@ sounddevice
 soundfile
 scipy
 rplidar-roboticia
+androidtvremote2
+bleak
+python-kasa
+zeroconf
+Flask>=3.0
