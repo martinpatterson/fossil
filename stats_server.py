@@ -478,6 +478,14 @@ INDEX_HTML = """<!DOCTYPE html>
     .v-warn { color: #e8c468; }
     .v-bad { color: #f87; }
     .v-unknown { color: #666; }
+
+    /* Prominent badge styling for PJ / Light bloom state */
+    .badge { display: inline-block; padding: 2px 10px; border-radius: 3px;
+             font-weight: 700; font-size: 13px; letter-spacing: 0.5px;
+             text-transform: uppercase; }
+    .badge.v-on  { background: #1f4429; color: #7bd88f; }
+    .badge.v-off { background: #3a1f1f; color: #f87; }
+    .badge.v-unknown { background: #2a2a2a; color: #888; }
     .updated { font-size: 12px; color: #555; margin-top: 12px; text-align: right; }
     .top { display: flex; justify-content: space-between; align-items: baseline; }
     .logout { color: #555; text-decoration: none; font-size: 13px; }
@@ -573,15 +581,27 @@ function setVal(id, value, klass) {
   el.className = 'value ' + (klass || '');
 }
 
+function setBadge(id, value) {
+  const el = document.getElementById(id);
+  // Map raw values to display labels
+  const display = {
+    'on': 'ON', 'off': 'OFF',
+    'active': 'ON', 'inactive': 'OFF',
+    'unreachable': 'UNREACH', 'unpaired': 'UNPAIRED',
+  }[value] || value.toUpperCase();
+  el.textContent = display;
+  el.className = 'value badge ' + classFor(value);
+}
+
 async function drawStatus() {
   let s;
   try { s = await fetch('/api/status').then(r => r.json()); }
   catch (e) { return; }
 
-  setVal('s-app', s.app || '?', classFor(s.app));
-  setVal('s-fossil-pj', s.fossil_pj || '?', classFor(s.fossil_pj));
-  setVal('s-haste-pj', s.haste_pj || '?', classFor(s.haste_pj));
-  setVal('s-bloom', s.bloom || '?', classFor(s.bloom));
+  setBadge('s-app', s.app || '?');
+  setBadge('s-fossil-pj', s.fossil_pj || '?');
+  setBadge('s-haste-pj', s.haste_pj || '?');
+  setBadge('s-bloom', s.bloom || '?');
   setVal('s-kinect', s.kinect_present === true ? 'present' : (s.kinect_present === false ? 'missing' : '?'),
          s.kinect_present === true ? 'v-on' : (s.kinect_present === false ? 'v-bad' : 'v-unknown'));
   setVal('s-uptime', s.uptime || '?');
