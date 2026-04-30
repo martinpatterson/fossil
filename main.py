@@ -67,12 +67,11 @@ def main():
     # Render internally at WUXGA, display at native resolution
     render_w, render_h = config.OUTPUT_WIDTH, config.OUTPUT_HEIGHT
 
-    # Force display to OUTPUT_WIDTH/HEIGHT (1920x1080). pygame fullscreen at
-    # this size triggers an X mode change, avoiding 4K render on this iGPU.
-    width, height = config.OUTPUT_WIDTH, config.OUTPUT_HEIGHT
     if config.FULLSCREEN:
+        width, height = screen_w, screen_h
         flags = pygame.OPENGL | pygame.DOUBLEBUF | pygame.FULLSCREEN
     else:
+        width, height = config.OUTPUT_WIDTH, config.OUTPUT_HEIGHT
         flags = pygame.OPENGL | pygame.DOUBLEBUF
 
     pygame.display.set_mode((width, height), flags)

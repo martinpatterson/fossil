@@ -2,12 +2,6 @@
 # Fossil kiosk X session — sets up display environment only
 # App lifecycle is managed by pj-monitor.service → fossil-app.service
 
-# Force 1920x1080 on whichever HDMI/DP is connected (4K hurts performance).
-# Tries each output; only the connected one with a 1920x1080 mode succeeds.
-for out in HDMI-1 HDMI-2 DP-1 DP-2 DP-3 DP-4; do
-    xrandr --output "$out" --mode 1920x1080 2>/dev/null
-done
-
 # Disable ALL screen blanking and power management
 xset s off
 xset s noblank

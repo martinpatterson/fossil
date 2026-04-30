@@ -272,6 +272,23 @@ fi
 # --- 10. Remove gnome-keyring (causes login prompts) ---
 apt-get remove -y gnome-keyring 2>/dev/null || true
 
+# --- Force HDMI-2 to 1920x1080 (projector handles upscale to 4K) ---
+# Required for the Hisense PX3-PRO whose EDID-preferred mode is 3840x2160.
+# Xorg honors this at server start, no WM/xrandr involvement.
+mkdir -p /etc/X11/xorg.conf.d
+cat > /etc/X11/xorg.conf.d/10-fossil-monitor.conf << 'EOF'
+Section "Monitor"
+    Identifier  "HDMI-2"
+    Option      "PreferredMode" "1920x1080"
+EndSection
+
+Section "Device"
+    Identifier  "Intel"
+    Driver      "modesetting"
+    Option      "Monitor-HDMI-2" "HDMI-2"
+EndSection
+EOF
+
 # --- 11. Disable screen blanking / power management ---
 echo ""
 echo "--- Disabling screen blanking ---"
