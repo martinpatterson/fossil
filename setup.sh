@@ -312,6 +312,23 @@ X-GNOME-Autostart-enabled=true
 EOFAUTO
 chown -R ${FOSSIL_USER}:${FOSSIL_USER} /home/${FOSSIL_USER}/.config/autostart
 
+# --- Network hardening: SSH key-only + UFW ---
+# SSH password auth disabled (key-based only)
+mkdir -p /etc/ssh/sshd_config.d
+cat > /etc/ssh/sshd_config.d/10-fossil.conf << 'EOF'
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+KbdInteractiveAuthentication no
+EOF
+sshd -t && systemctl reload ssh
+
+# UFW: default deny incoming, allow SSH + stats only
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow 22/tcp
+ufw allow 5050/tcp
+ufw --force enable
+
 # --- 12. Disable USB autosuspend (Kinect reliability) ---
 echo ""
 echo "--- Disabling USB autosuspend ---"
