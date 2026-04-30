@@ -1,5 +1,5 @@
 {
-    "fossil-pj": {"ip": "10.0.0.10"},
+    "fossil-pj": {"ip": "10.0.0.10", "adb_power": true},
     "haste-pj":  {"ip": "10.0.0.11"},
     "buttons": {
         "fossil": "B0:C7:DE:C2:8E:C3",

@@ -78,13 +78,13 @@ def load_config():
 def resolve_target(name_or_ip):
     config = load_config()
     if name_or_ip in config:
-        return name_or_ip, config[name_or_ip]["ip"]
+        return name_or_ip, config[name_or_ip]["ip"], config[name_or_ip]
     # Try matching by IP
     for name, cfg in config.items():
-        if cfg["ip"] == name_or_ip:
-            return name, name_or_ip
+        if cfg.get("ip") == name_or_ip:
+            return name, name_or_ip, cfg
     # Use as raw IP with generated name
-    return name_or_ip.replace(".", "_"), name_or_ip
+    return name_or_ip.replace(".", "_"), name_or_ip, {}
 
 
 def cert_paths(name):
@@ -127,9 +127,38 @@ async def do_status(name, ip):
     remote.disconnect()
 
 
-async def do_power(name, ip, turn_on):
+async def _adb_keyevent(ip: str, keycode: str) -> None:
+    """Send a key via ADB (used for projectors whose firmware doesn't honor
+    Google TV Remote KEYCODE_POWER from sleep — e.g. Hisense PX3-PRO 6.7+)."""
+    proc = await asyncio.create_subprocess_exec(
+        "adb", "connect", f"{ip}:5555",
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+    )
+    await proc.wait()
+    proc = await asyncio.create_subprocess_exec(
+        "adb", "-s", f"{ip}:5555", "shell", "input", "keyevent", keycode,
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+    )
+    await proc.wait()
+
+
+async def do_power(name, ip, turn_on, cfg=None):
     from androidtvremote2 import AndroidTVRemote
     from androidtvremote2.exceptions import CannotConnect
+
+    cfg = cfg or {}
+    use_adb = bool(cfg.get("adb_power"))
+
+    if use_adb:
+        # Pure ADB path — works regardless of firmware quirks. Status query
+        # via Google TV Remote (only after waking, since asleep PJ may
+        # not respond to remote queries on some firmware).
+        action = "on" if turn_on else "off"
+        keycode = "KEYCODE_WAKEUP" if turn_on else "KEYCODE_SLEEP"
+        print(f"{name}: turning {action} via ADB ({keycode})")
+        await _adb_keyevent(ip, keycode)
+        await asyncio.sleep(1.0)
+        return
 
     certfile, keyfile = cert_paths(name)
     if not os.path.exists(certfile):
@@ -155,7 +184,7 @@ async def do_power(name, ip, turn_on):
     elif not turn_on and not is_on:
         print(f"{name}: already off")
     else:
-        remote.send_key_command("KEYCODE_POWER")
+        remote.send_key_command("KEYCODE_POWER", "SHORT")
         action = "on" if turn_on else "off"
         print(f"{name}: turning {action}")
         # send_key_command is async/buffered; wait for it to flush before disconnect
@@ -184,16 +213,16 @@ def main():
 
     target = sys.argv[1]
     command = sys.argv[2].lower()
-    name, ip = resolve_target(target)
+    name, ip, cfg = resolve_target(target)
 
     if command == "pair":
         asyncio.run(do_pair(name, ip))
     elif command == "status":
         asyncio.run(do_status(name, ip))
     elif command == "on":
-        asyncio.run(do_power(name, ip, True))
+        asyncio.run(do_power(name, ip, True, cfg))
     elif command == "off":
-        asyncio.run(do_power(name, ip, False))
+        asyncio.run(do_power(name, ip, False, cfg))
     else:
         print(f"Unknown command: {command}")
         print(__doc__)
