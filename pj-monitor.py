@@ -164,17 +164,25 @@ async def monitor():
                 print(f"{MONITOR_PJ}: connection lost", flush=True)
                 remote = None
 
-        # If no connection, treat as unreachable — watchdog: app runs
+        # If no connection, decide based on last known state.
         if remote is None:
-            if not notified_unreachable:
-                print(f"{MONITOR_PJ}: unreachable", flush=True)
-                pushover("Fossil PJ Monitor", f"Cannot reach {MONITOR_PJ} ({ip})")
-                notified_unreachable = True
             if last_confirmed_off:
-                print(f"{MONITOR_PJ}: lost OFF signal — starting app", flush=True)
-                pushover("Fossil PJ Monitor", f"Lost {MONITOR_PJ} — app started")
-                last_confirmed_off = False
-            ensure_running()
+                # PJ was just confirmed OFF (e.g. user pressed power, or PJ
+                # auto-slept). Going unreachable from OFF is expected — the
+                # device drops its TCP socket as part of deeper standby.
+                # Keep the app stopped and stay quiet (no Pushover, no log
+                # spam — only one "unreachable" line per disconnect).
+                if not notified_unreachable:
+                    print(f"{MONITOR_PJ}: unreachable (was OFF — staying stopped)", flush=True)
+                    notified_unreachable = True
+                ensure_stopped()
+            else:
+                # Last seen ON or unknown — watchdog: app should run.
+                if not notified_unreachable:
+                    print(f"{MONITOR_PJ}: unreachable", flush=True)
+                    pushover("Fossil PJ Monitor", f"Cannot reach {MONITOR_PJ} ({ip})")
+                    notified_unreachable = True
+                ensure_running()
 
         await asyncio.sleep(POLL_INTERVAL)
 
