@@ -154,10 +154,12 @@ class Renderer:
         self.fossil2_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
         self._bg_next_idx = next_idx
 
-        # Silhouette texture
-        blank = np.zeros((self.height, self.width), dtype="f4")
+        # Silhouette texture — uint8 normalized (8-bit single-channel).
+        # 4x smaller upload than float32 — was the dominant CPU cost (45%
+        # of frame time per py-spy). Sampler still returns 0..1 in shader.
+        blank = np.zeros((self.height, self.width), dtype=np.uint8)
         self.sil_tex = ctx.texture(
-            (self.width, self.height), 1, blank.tobytes(), dtype="f4"
+            (self.width, self.height), 1, blank.tobytes(), dtype="f1"
         )
         self.sil_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
 
@@ -249,6 +251,13 @@ class Renderer:
         self.label_tex.write(img.tobytes())
 
     def update_silhouette(self, mask: np.ndarray):
+        # Mask is float32 in [0,1] from kinect.py (drawContours fills with 1
+        # then GaussianBlur). Cast to uint8 [0,255] so the GPU upload is 4x
+        # smaller — this was 45% of frame time before the optimization.
+        # cv2.convertScaleAbs is the fastest pure-C path.
+        if mask.dtype != np.uint8:
+            import cv2
+            mask = cv2.convertScaleAbs(mask, alpha=255.0)
         self.sil_tex.write(mask.tobytes())
 
     def update_debug(self, depth_vis: np.ndarray, mask: np.ndarray = None):
