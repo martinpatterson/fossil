@@ -154,13 +154,10 @@ class Renderer:
         self.fossil2_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
         self._bg_next_idx = next_idx
 
-        # Silhouette texture — half-float (f2) = 2x smaller upload than f4
-        # while preserving enough precision for smooth blurred edges.
-        # uint8 (f1) would be 4x but causes visible banding on the Pixel
-        # effect's cellSil thresholding.
-        blank = np.zeros((self.height, self.width), dtype=np.float16)
+        # Silhouette texture (float32 single-channel).
+        blank = np.zeros((self.height, self.width), dtype="f4")
         self.sil_tex = ctx.texture(
-            (self.width, self.height), 1, blank.tobytes(), dtype="f2"
+            (self.width, self.height), 1, blank.tobytes(), dtype="f4"
         )
         self.sil_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
 
@@ -252,11 +249,6 @@ class Renderer:
         self.label_tex.write(img.tobytes())
 
     def update_silhouette(self, mask: np.ndarray):
-        # Mask is float32 in [0,1] from kinect.py. Cast to float16 — half
-        # the upload bytes of float32, full sub-byte precision (preserves
-        # smooth blurred edges that uint8 quantizes too coarsely).
-        if mask.dtype != np.float16:
-            mask = mask.astype(np.float16)
         self.sil_tex.write(mask.tobytes())
 
     def update_debug(self, depth_vis: np.ndarray, mask: np.ndarray = None):
