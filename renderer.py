@@ -121,7 +121,8 @@ class Renderer:
 
         def hold_for(path):
             base = os.path.basename(path)
-            if base.startswith(("Burton_2", "Burton_3", "Burton_4")):
+            # MAY Amigo set (replaces the old Burton_2/3/4)
+            if base.startswith(("1_Amigo_MAY", "2_Burton_Amigos_MAY", "3_Burton_Amigos_MAY")):
                 return 20.0
             return 60.0
 
