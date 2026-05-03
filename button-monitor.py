@@ -122,12 +122,15 @@ def haste_off() -> None:
 _kasa_client = None
 
 
-async def _kasa() -> "KasaClient":
+async def _kasa():
+    """TP-Link cloud control. Works on isolated/guest WiFi where LAN
+    discovery is blocked — the device maintains its own connection to
+    TP-Link cloud, so commands route through there."""
     global _kasa_client
     if _kasa_client is None:
-        from kasa_adapter import KasaClient
-        _kasa_client = KasaClient()
-        await _kasa_client.discover()
+        from kasa_cloud import KasaCloud
+        _kasa_client = KasaCloud()
+        await _kasa_client.login()
     return _kasa_client
 
 

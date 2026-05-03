@@ -362,21 +362,21 @@ _kasa_lock = threading.Lock()
 
 
 async def _query_bloom() -> str:
-    """Query 'Kasa 4' outlet state. Returns 'on'/'off'/'?'."""
+    """Query 'Kasa 4' outlet state via TP-Link cloud (LAN may be isolated)."""
     global _kasa_client
     try:
-        from kasa_adapter import KasaClient
+        from kasa_cloud import KasaCloud
     except ImportError:
         return "?"
     try:
         with _kasa_lock:
             if _kasa_client is None:
-                _kasa_client = KasaClient()
-                await _kasa_client.discover()
+                _kasa_client = KasaCloud()
+                await _kasa_client.login()
         return "on" if await _kasa_client.is_on("Kasa 4") else "off"
     except Exception as e:
         log.debug("bloom query failed: %s", e)
-        # Reset on error so next attempt re-discovers
+        # Reset on error so next attempt re-logs in
         with _kasa_lock:
             _kasa_client = None
         return "?"
