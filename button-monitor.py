@@ -77,7 +77,9 @@ def run(cmd: list[str]) -> None:
 def fossil_on() -> None:
     log.info("Fossil ON")
     pushover("Fossil Button", "Fossil ON")
-    run(["sudo", "systemctl", "start", "fossil-app.service"])
+    # Only control the PJ — pj-monitor's callback starts the app when
+    # fossil-pj transitions to ON. Touching fossil-app directly here
+    # races with pj-monitor and causes the app to blink off then back.
     run([
         sys.executable, str(SCRIPT_DIR / "pj-control.py"),
         "fossil-pj", "on",
@@ -87,7 +89,8 @@ def fossil_on() -> None:
 def fossil_off() -> None:
     log.info("Fossil OFF")
     pushover("Fossil Button", "Fossil OFF")
-    run(["sudo", "systemctl", "stop", "fossil-app.service"])
+    # See fossil_on(): only control the PJ. pj-monitor stops fossil-app
+    # via its OFF callback when fossil-pj transitions to OFF.
     run([
         sys.executable, str(SCRIPT_DIR / "pj-control.py"),
         "fossil-pj", "off",
