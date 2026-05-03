@@ -115,14 +115,12 @@ class Renderer:
                     self._bg_images.append(p)
         print(f"Backgrounds: {len(self._bg_images)} images loaded")
 
-        # Per-image hold time. Burton_2/3/4 hold 20s, others hold 60s.
-        # Crossfade is 5s for all.
+        # MAY Amigo shots hold 20s, all other backgrounds 60s. Crossfade 5s.
         self._bg_fade = 5.0
 
         def hold_for(path):
             base = os.path.basename(path)
-            # MAY Amigo set (replaces the old Burton_2/3/4)
-            if base.startswith(("1_Amigo_MAY", "2_Burton_Amigos_MAY", "3_Burton_Amigos_MAY")):
+            if base.startswith(("1_Amigo_MAY", "2_Amigo_MAY", "3_Burton_Amigos_MAY")):
                 return 20.0
             return 60.0
 

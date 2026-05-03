@@ -33,8 +33,8 @@ LIDAR_CLUSTER_MIN_PTS   = 3
 LIDAR_CLUSTER_MAX_PTS   = 40
 LIDAR_STEP_MIN_FRAMES   = 1         # frames to confirm a step
 LIDAR_STEP_MAX_FRAMES   = 8         # frames before treating as stationary
-LIDAR_REARM_FRAMES      = 3         # frames absent before re-triggering
-LIDAR_VELOCITY_MIN_MM   = 20        # min movement to count as a step
+LIDAR_REARM_FRAMES      = 1         # frames absent before re-triggering
+LIDAR_VELOCITY_MIN_MM   = 10        # min movement to count as a step
 LIDAR_GALLERY_WIDTH_MM  = 4000      # physical gallery width for pan mapping
 
 # ── Audio ──────────────────────────────────────────────────────────────────
