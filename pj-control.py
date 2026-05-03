@@ -142,6 +142,30 @@ async def _adb_keyevent(ip: str, keycode: str) -> None:
     await proc.wait()
 
 
+async def _query_is_on(name: str, ip: str) -> bool | None:
+    """Best-effort current power state via Google TV Remote.
+    Returns True/False or None if unreachable. Short timeout — never blocks."""
+    try:
+        from androidtvremote2 import AndroidTVRemote
+    except ImportError:
+        return None
+    certfile, keyfile = cert_paths(name)
+    if not os.path.exists(certfile):
+        return None
+    try:
+        remote = AndroidTVRemote("Fossil NUC", certfile, keyfile, ip)
+        await asyncio.wait_for(remote.async_connect(), timeout=2.5)
+        await asyncio.sleep(0.5)
+        is_on = remote.is_on
+        try:
+            remote.disconnect()
+        except Exception:
+            pass
+        return is_on
+    except Exception:
+        return None
+
+
 async def do_power(name, ip, turn_on, cfg=None):
     from androidtvremote2 import AndroidTVRemote
     from androidtvremote2.exceptions import CannotConnect
@@ -150,11 +174,19 @@ async def do_power(name, ip, turn_on, cfg=None):
     use_adb = bool(cfg.get("adb_power"))
 
     if use_adb:
-        # Pure ADB path — works regardless of firmware quirks. Status query
-        # via Google TV Remote (only after waking, since asleep PJ may
-        # not respond to remote queries on some firmware).
+        # Pure ADB path — works regardless of firmware quirks.
+        # First check current state via Google TV Remote (best effort) so we
+        # don't redundantly fire WAKEUP/SLEEP. Sending WAKEUP to an already
+        # awake Hisense PX3-PRO triggers an HDMI re-handshake (black flash).
         action = "on" if turn_on else "off"
         keycode = "KEYCODE_WAKEUP" if turn_on else "KEYCODE_SLEEP"
+        is_on = await _query_is_on(name, ip)
+        if is_on is True and turn_on:
+            print(f"{name}: already on")
+            return
+        if is_on is False and not turn_on:
+            print(f"{name}: already off")
+            return
         print(f"{name}: turning {action} via ADB ({keycode})")
         await _adb_keyevent(ip, keycode)
         await asyncio.sleep(1.0)
