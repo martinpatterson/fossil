@@ -60,6 +60,24 @@ def service_active():
     return result.stdout.strip() == "active"
 
 
+def adb_select_input(ip, input_id):
+    """Force projector input to NUC's HDMI port. Otherwise the PJ resumes
+    whatever app was last on screen (Netflix, Disney+, etc.) and never
+    shows the NUC."""
+    from urllib.parse import quote
+    uri = f"content://android.media.tv/passthrough/{quote(input_id, safe='')}"
+    try:
+        subprocess.run(["adb", "connect", f"{ip}:5555"],
+                       capture_output=True, timeout=5)
+        subprocess.run(
+            ["adb", "-s", f"{ip}:5555", "shell", "am", "start",
+             "-a", "android.intent.action.VIEW", "-d", uri],
+            capture_output=True, timeout=10,
+        )
+    except Exception as e:
+        print(f"select-input failed: {e}", flush=True)
+
+
 def service_start():
     subprocess.run(
         ["sudo", "systemctl", "start", "fossil-app.service"],
@@ -100,9 +118,16 @@ async def monitor():
         sys.exit(1)
 
     ip = config[MONITOR_PJ]["ip"]
+    input_id = config[MONITOR_PJ].get("hdmi_input_id")
     certfile = os.path.join(CERT_DIR, f"{MONITOR_PJ}-cert.pem")
     keyfile = os.path.join(CERT_DIR, f"{MONITOR_PJ}-key.pem")
     print(f"Monitoring {MONITOR_PJ} ({ip}) every {POLL_INTERVAL}s", flush=True)
+
+    def pj_is_on():
+        """PJ confirmed on: ensure app running and force input to NUC."""
+        ensure_running()
+        if input_id:
+            adb_select_input(ip, input_id)
 
     # App always starts running
     ensure_running()
@@ -121,7 +146,7 @@ async def monitor():
                 pushover("Fossil PJ Monitor", f"{MONITOR_PJ} ON — app started")
             last_confirmed_off = False
             notified_unreachable = False
-            ensure_running()
+            pj_is_on()
         else:
             if not last_confirmed_off:
                 print(f"{MONITOR_PJ}: OFF (callback) — stopping app", flush=True)
@@ -146,7 +171,7 @@ async def monitor():
                             print(f"{MONITOR_PJ}: ON — starting app", flush=True)
                             pushover("Fossil PJ Monitor", f"{MONITOR_PJ} ON — app started")
                         last_confirmed_off = False
-                        ensure_running()
+                        pj_is_on()
                     elif power is False:
                         if not last_confirmed_off:
                             print(f"{MONITOR_PJ}: OFF — stopping app", flush=True)

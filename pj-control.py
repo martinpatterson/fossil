@@ -142,6 +142,20 @@ async def _adb_keyevent(ip: str, keycode: str) -> None:
     await proc.wait()
 
 
+async def _adb_select_input(ip: str, input_id: str) -> None:
+    """Switch projector to a TvInput passthrough.
+    input_id like 'com.vt.source.external/.hdmi.HdmiTvInputService/HW2'.
+    KEYCODE_TV_INPUT_HDMI_1 is a no-op on Hisense PX3-PRO; this intent works."""
+    from urllib.parse import quote
+    uri = f"content://android.media.tv/passthrough/{quote(input_id, safe='')}"
+    proc = await asyncio.create_subprocess_exec(
+        "adb", "-s", f"{ip}:5555", "shell", "am", "start",
+        "-a", "android.intent.action.VIEW", "-d", uri,
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+    )
+    await proc.wait()
+
+
 async def _query_is_on(name: str, ip: str) -> bool | None:
     """Best-effort current power state via Google TV Remote.
     Returns True/False or None if unreachable. Short timeout — never blocks."""
@@ -190,6 +204,11 @@ async def do_power(name, ip, turn_on, cfg=None):
         print(f"{name}: turning {action} via ADB ({keycode})")
         await _adb_keyevent(ip, keycode)
         await asyncio.sleep(1.0)
+        input_id = cfg.get("hdmi_input_id")
+        if turn_on and input_id:
+            await asyncio.sleep(1.5)
+            await _adb_select_input(ip, input_id)
+            print(f"{name}: selected input {input_id}")
         return
 
     certfile, keyfile = cert_paths(name)

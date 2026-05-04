@@ -66,10 +66,10 @@ session.sh (X session)
 - **Model**: ezOutlet5 (EZ-72)
 - **Hostname**: ezoutlet
 - **Wired IP**: 10.0.0.2 (static, subnet 255.255.255.0, gateway 10.0.0.1)
-- **WiFi**: SSID `ANY`, DHCP
+- **WiFi**: SSID `MuseumAdminGuest`, DHCP
 - **HTTP Port**: 80
 - **Default credentials**: admin / 1AA51F
-- **Cloud**: Disabled
+- **Cloud**: Enabled
 
 ### ezOutlet5 Settings
 | Setting | Value |
