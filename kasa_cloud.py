@@ -27,6 +27,12 @@ log = logging.getLogger("kasa_cloud")
 
 CLOUD_URL = "https://wap.tplinkcloud.com/"
 
+# TP-Link cloud invalidates older tokens when another login arrives for the
+# same account from a different terminal_uuid. With button-monitor + stats
+# both running, they race and tokens go stale fast — auto-relogin keeps
+# both processes self-healing.
+TOKEN_EXPIRED = -20651
+
 
 class KasaCloud:
     def __init__(self, username: str | None = None, password: str | None = None) -> None:
@@ -60,10 +66,19 @@ class KasaCloud:
         self._token = resp["result"]["token"]
         log.info("Kasa cloud: logged in as %s", self._username)
 
-    async def list_devices(self) -> list[dict]:
+    async def _post_with_token(self, payload: dict) -> dict:
+        """POST with token; relogin and retry once on TOKEN_EXPIRED."""
         if not self._token:
             await self.login()
-        resp = await self._post({"method": "getDeviceList"}, with_token=True)
+        resp = await self._post(payload, with_token=True)
+        if resp.get("error_code") == TOKEN_EXPIRED:
+            log.info("Kasa cloud: token expired, re-logging in")
+            await self.login()
+            resp = await self._post(payload, with_token=True)
+        return resp
+
+    async def list_devices(self) -> list[dict]:
+        resp = await self._post_with_token({"method": "getDeviceList"})
         if resp.get("error_code", 0) != 0:
             raise RuntimeError(f"Kasa cloud list devices failed: {resp}")
         devices = resp["result"]["deviceList"]
@@ -85,13 +100,13 @@ class KasaCloud:
 
     async def _passthrough(self, alias: str, command: dict) -> dict:
         dev = await self._resolve(alias)
-        resp = await self._post({
+        resp = await self._post_with_token({
             "method": "passthrough",
             "params": {
                 "deviceId": dev["deviceId"],
                 "requestData": json.dumps(command),
             },
-        }, with_token=True)
+        })
         if resp.get("error_code", 0) != 0:
             raise RuntimeError(f"Kasa cloud passthrough failed: {resp}")
         # passthrough returns {"result": {"responseData": "<json string>"}}

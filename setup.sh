@@ -243,6 +243,21 @@ chown ${FOSSIL_USER}:${FOSSIL_USER} ${FOSSIL_DIR}/data
 touch /var/log/fossil.log
 chown ${FOSSIL_USER}:${FOSSIL_USER} /var/log/fossil.log
 
+# Logrotate. /var/log is group-writable (root:syslog), so logrotate
+# requires an explicit `su` directive to accept the parent dir perms.
+cat > /etc/logrotate.d/fossil <<'EOF'
+/var/log/fossil.log {
+    su root syslog
+    daily
+    rotate 7
+    compress
+    missingok
+    notifempty
+    copytruncate
+    size 10M
+}
+EOF
+
 # Re-enable bluetooth for BLE scanning (disabled earlier for cleanliness)
 systemctl unmask bluetooth.service 2>/dev/null || true
 systemctl enable bluetooth.service
