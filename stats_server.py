@@ -325,15 +325,12 @@ async def _query_pj(name: str, ip: str) -> str:
     key = PJ_CERT_DIR / f"{name}-key.pem"
     if not cert.exists():
         return "unpaired"
+    remote = None
     try:
         remote = AndroidTVRemote("Stats Server", str(cert), str(key), ip)
         await asyncio.wait_for(remote.async_connect(), timeout=3.0)
         await asyncio.sleep(0.5)
         is_on = remote.is_on
-        try:
-            remote.disconnect()
-        except Exception:
-            pass
         if is_on is None:
             return "?"
         return "on" if is_on else "off"
@@ -341,6 +338,20 @@ async def _query_pj(name: str, ip: str) -> str:
         return "unreachable"
     except Exception:
         return "?"
+    finally:
+        # Always disconnect — error paths used to leak the transport, and
+        # the per-poll event loop closes immediately after this returns,
+        # so we also yield long enough for the asyncio close callback to
+        # actually send FIN. Without this, sockets pile up in CLOSE-WAIT.
+        if remote is not None:
+            try:
+                remote.disconnect()
+            except Exception:
+                pass
+            try:
+                await asyncio.sleep(0.1)
+            except Exception:
+                pass
 
 
 def _load_secrets() -> None:
