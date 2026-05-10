@@ -22,7 +22,7 @@ import sqlite3
 import subprocess
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -32,6 +32,8 @@ from flask import Flask, jsonify, redirect, render_template_string, request, ses
 import config
 
 LOCAL_TZ = ZoneInfo("America/Los_Angeles")
+EXHIBIT_START = date(2026, 5, 9)
+EXHIBIT_END = date(2026, 9, 6)
 DB_PATH = Path(__file__).resolve().parent / getattr(
     config, "STEP_COUNTER_DB", "data/footsteps.db"
 )
@@ -143,13 +145,21 @@ def api_daily():
     try:
         conn = _connect_ro()
         rows = conn.execute(
-            "SELECT substr(hour_utc, 1, 10) AS day_utc, SUM(count) "
-            "FROM hourly_steps GROUP BY day_utc ORDER BY day_utc ASC"
+            "SELECT hour_utc, count FROM hourly_steps"
         ).fetchall()
         conn.close()
     except sqlite3.OperationalError:
         return jsonify([])
-    return jsonify([{"day": d, "count": int(t)} for d, t in rows])
+    # Aggregate by Pacific Time date — UTC hour 03 on 5/10 is 5/9 8pm PT.
+    daily: dict[str, int] = {}
+    for h, c in rows:
+        try:
+            dt = datetime.strptime(h, "%Y-%m-%dT%H").replace(tzinfo=timezone.utc)
+            day = dt.astimezone(LOCAL_TZ).strftime("%Y-%m-%d")
+        except Exception:
+            day = h[:10]
+        daily[day] = daily.get(day, 0) + int(c)
+    return jsonify([{"day": d, "count": t} for d, t in sorted(daily.items())])
 
 
 @app.route("/api/total")
@@ -159,9 +169,13 @@ def api_total():
         conn = _connect_ro()
         row = conn.execute("SELECT COALESCE(SUM(count), 0) FROM hourly_steps").fetchone()
         conn.close()
+        total = int(row[0])
     except sqlite3.OperationalError:
-        return jsonify({"total": 0})
-    return jsonify({"total": int(row[0])})
+        total = 0
+    today_pt = datetime.now(LOCAL_TZ).date()
+    day_total = (EXHIBIT_END - EXHIBIT_START).days + 1
+    day_n = (today_pt - EXHIBIT_START).days + 1
+    return jsonify({"total": total, "day": day_n, "day_total": day_total})
 
 
 # ──────────────────────── system status collector ──────────────────────
@@ -507,7 +521,7 @@ INDEX_HTML = """<!DOCTYPE html>
   <div class="top">
     <div>
       <h1>Tyler — Fossil Footsteps</h1>
-      <div class="total">Total recorded: <span id="total">…</span></div>
+      <div class="total">Day <span id="day">…</span> of <span id="day-total">…</span> · Total recorded: <span id="total">…</span></div>
     </div>
     <a class="logout" href="/logout">log out</a>
   </div>
@@ -556,6 +570,8 @@ let hourlyChart = null, dailyChart = null;
 async function drawCharts() {
   const total = await fetch('/api/total').then(r => r.json());
   document.getElementById('total').textContent = total.total.toLocaleString();
+  document.getElementById('day').textContent = total.day;
+  document.getElementById('day-total').textContent = total.day_total;
 
   const hourly = await fetch('/api/hourly?days=7').then(r => r.json());
   const dailyData = await fetch('/api/daily').then(r => r.json());
