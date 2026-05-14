@@ -31,7 +31,9 @@ CLOUD_URL = "https://wap.tplinkcloud.com/"
 # same account from a different terminal_uuid. With button-monitor + stats
 # both running, they race and tokens go stale fast — auto-relogin keeps
 # both processes self-healing.
-TOKEN_EXPIRED = -20651
+TOKEN_EXPIRED = -20651       # token aged out
+TOKEN_DISPLACED = -20675     # another client logged in for this account
+SESSION_INVALID = {TOKEN_EXPIRED, TOKEN_DISPLACED}
 
 
 class KasaCloud:
@@ -67,12 +69,13 @@ class KasaCloud:
         log.info("Kasa cloud: logged in as %s", self._username)
 
     async def _post_with_token(self, payload: dict) -> dict:
-        """POST with token; relogin and retry once on TOKEN_EXPIRED."""
+        """POST with token; relogin and retry once if the session is invalid."""
         if not self._token:
             await self.login()
         resp = await self._post(payload, with_token=True)
-        if resp.get("error_code") == TOKEN_EXPIRED:
-            log.info("Kasa cloud: token expired, re-logging in")
+        if resp.get("error_code") in SESSION_INVALID:
+            log.info("Kasa cloud: session invalid (%s), re-logging in",
+                     resp.get("error_code"))
             await self.login()
             resp = await self._post(payload, with_token=True)
         return resp
