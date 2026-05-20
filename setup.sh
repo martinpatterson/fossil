@@ -268,18 +268,23 @@ systemctl enable pj-monitor.service
 systemctl enable button-monitor.service
 systemctl enable fossil-stats.service
 
-# --- 9. Audio: set analog output to max ---
+# --- 9. Audio: tuned levels for museum room ---
 echo ""
 echo "--- Configuring audio ---"
 # Find the PCH card number (may vary by hardware)
 PCH_CARD=$(cat /proc/asound/cards | grep PCH | awk '{print $1}')
 if [ -n "$PCH_CARD" ]; then
-    amixer -c ${PCH_CARD} sset Master 100% on 2>/dev/null || true
+    # Master at 80% (-12.75 dB) — calibrated for the room; 100% clips on
+    # the loudest clips. PCM stays at 99% (near-unity) so the dB cut is
+    # entirely in Master.
+    amixer -c ${PCH_CARD} sset Master 80% on 2>/dev/null || true
     amixer -c ${PCH_CARD} sset Headphone 100% on 2>/dev/null || true
-    amixer -c ${PCH_CARD} sset PCM 100% 2>/dev/null || true
+    amixer -c ${PCH_CARD} sset PCM 99% 2>/dev/null || true
     amixer -c ${PCH_CARD} sset 'Line Out' 100% on 2>/dev/null || true
     amixer -c ${PCH_CARD} sset 'Auto-Mute Mode' Disabled 2>/dev/null || true
-    echo "Audio: PCH card ${PCH_CARD} configured"
+    # Persist so the levels survive reboot via alsa-restore.service.
+    alsactl store 2>/dev/null || true
+    echo "Audio: PCH card ${PCH_CARD} configured (Master 80%, PCM 99%)"
 else
     echo "Audio: WARNING — PCH card not found, configure manually"
 fi
