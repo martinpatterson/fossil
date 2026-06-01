@@ -191,10 +191,11 @@ async def do_power(name, ip, turn_on, cfg=None):
     # That path is less reliable: it may fail to wake from deep sleep on
     # firmwares where KEYCODE_POWER is a no-op for wake. Remove the flag
     # once ADB is restored on the device.
-    use_adb = bool(cfg.get("adb_power")) and not cfg.get("adb_disabled")
-    if cfg.get("adb_power") and cfg.get("adb_disabled"):
-        print(f"{name}: adb_disabled — using Google TV Remote KEYCODE_POWER "
-              f"(wake-from-deep-sleep may fail)")
+    adb_fallback = bool(cfg.get("adb_power")) and bool(cfg.get("adb_disabled"))
+    use_adb = bool(cfg.get("adb_power")) and not adb_fallback
+    if adb_fallback:
+        print(f"{name}: adb_disabled — using Google TV Remote "
+              f"(wake=MENU+BACK, sleep=POWER)")
 
     if use_adb:
         # Pure ADB path — works regardless of firmware quirks.
@@ -244,9 +245,18 @@ async def do_power(name, ip, turn_on, cfg=None):
     elif not turn_on and not is_on:
         print(f"{name}: already off")
     else:
-        remote.send_key_command("KEYCODE_POWER", "SHORT")
-        action = "on" if turn_on else "off"
-        print(f"{name}: turning {action}")
+        if turn_on and adb_fallback:
+            # haste-pj quirk: in deep sleep, KEYCODE_POWER and KEYCODE_WAKEUP
+            # are both no-ops. KEYCODE_MENU wakes it. MENU also surfaces the
+            # Hisense overlay strip, so we follow with KEYCODE_BACK to dismiss.
+            remote.send_key_command("KEYCODE_MENU", "SHORT")
+            await asyncio.sleep(1.5)
+            remote.send_key_command("KEYCODE_BACK", "SHORT")
+            print(f"{name}: turning on (MENU+BACK)")
+        else:
+            remote.send_key_command("KEYCODE_POWER", "SHORT")
+            action = "on" if turn_on else "off"
+            print(f"{name}: turning {action}")
         # send_key_command is async/buffered; wait for it to flush before disconnect
         await asyncio.sleep(1.0)
     remote.disconnect()
