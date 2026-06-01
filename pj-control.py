@@ -185,7 +185,16 @@ async def do_power(name, ip, turn_on, cfg=None):
     from androidtvremote2.exceptions import CannotConnect
 
     cfg = cfg or {}
-    use_adb = bool(cfg.get("adb_power"))
+    # `adb_disabled: true` is a temporary fallback for when ADB is locked out
+    # (e.g. the device's USB-debugging auth dialog needs physical OK). It
+    # routes power through the Google TV Remote KEYCODE_POWER path instead.
+    # That path is less reliable: it may fail to wake from deep sleep on
+    # firmwares where KEYCODE_POWER is a no-op for wake. Remove the flag
+    # once ADB is restored on the device.
+    use_adb = bool(cfg.get("adb_power")) and not cfg.get("adb_disabled")
+    if cfg.get("adb_power") and cfg.get("adb_disabled"):
+        print(f"{name}: adb_disabled — using Google TV Remote KEYCODE_POWER "
+              f"(wake-from-deep-sleep may fail)")
 
     if use_adb:
         # Pure ADB path — works regardless of firmware quirks.
