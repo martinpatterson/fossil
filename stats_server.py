@@ -194,6 +194,8 @@ _status_cache: dict = {
     "fossil_pj": "?",
     "haste_pj": "?",
     "bloom": "?",
+    "lights": "?",
+    "batteries": {},
     "temp_c": None,
     "ups_status": "?",
     "ups_battery": None,
@@ -386,25 +388,44 @@ _kasa_client = None
 _kasa_lock = threading.Lock()
 
 
-async def _query_bloom() -> str:
-    """Query 'Kasa 4' outlet state via TP-Link cloud (LAN may be isolated)."""
+KASA_QUERY_ALIASES = ("Kasa 4", "Kasa 5")   # bloom, lights
+
+
+async def _query_kasa() -> dict:
+    """Query both Kasa outlets in one cloud session. Returns
+    {alias: 'on'|'off'|'?'}. Re-auth + retry is handled inside
+    kasa_cloud (see fixes 672b743 and 2f1fd5d)."""
     global _kasa_client
+    result = {a: "?" for a in KASA_QUERY_ALIASES}
     try:
         from kasa_cloud import KasaCloud
     except ImportError:
-        return "?"
+        return result
     try:
         with _kasa_lock:
             if _kasa_client is None:
                 _kasa_client = KasaCloud()
                 await _kasa_client.login()
-        return "on" if await _kasa_client.is_on("Kasa 4") else "off"
+        for alias in KASA_QUERY_ALIASES:
+            try:
+                result[alias] = "on" if await _kasa_client.is_on(alias) else "off"
+            except Exception as e:
+                log.debug("kasa query %s failed: %s", alias, e)
     except Exception as e:
-        log.debug("bloom query failed: %s", e)
-        # Reset on error so next attempt re-logs in
+        log.debug("kasa session failed: %s", e)
         with _kasa_lock:
             _kasa_client = None
-        return "?"
+    return result
+
+
+def _read_battery_state() -> dict:
+    """Returns role-keyed {'fossil': {'battery': 87, 'at': 1717..., 'mac': '...'}, ...}
+    or {} if button-monitor hasn't published yet."""
+    try:
+        with open("/tmp/shelly-battery.json") as f:
+            return json.load(f)
+    except (FileNotFoundError, ValueError, OSError):
+        return {}
 
 
 async def _collect_async() -> dict:
@@ -416,11 +437,16 @@ async def _collect_async() -> dict:
     haste_pj_task = asyncio.create_task(
         _query_pj("haste-pj", cfg.get("haste-pj", {}).get("ip", "10.0.0.11"))
     )
-    bloom_task = asyncio.create_task(_query_bloom())
+    kasa_task = asyncio.create_task(_query_kasa())
     fossil_pj = await fossil_pj_task
     haste_pj = await haste_pj_task
-    bloom = await bloom_task
-    return {"fossil_pj": fossil_pj, "haste_pj": haste_pj, "bloom": bloom}
+    kasa = await kasa_task
+    return {
+        "fossil_pj": fossil_pj,
+        "haste_pj": haste_pj,
+        "bloom": kasa["Kasa 4"],
+        "lights": kasa["Kasa 5"],
+    }
 
 
 def _collect_status() -> None:
@@ -432,6 +458,7 @@ def _collect_status() -> None:
     new["temp_c"] = _read_temp_c()
     new["uptime"] = _read_uptime()
     new["kinect_present"] = _read_kinect_present()
+    new["batteries"] = _read_battery_state()
     st, batt, runtime = _read_ups()
     new["ups_status"] = st
     new["ups_battery"] = batt
@@ -543,6 +570,10 @@ INDEX_HTML = """<!DOCTYPE html>
       <div class="status-row"><span class="label">Fossil projector</span><span class="value" id="s-fossil-pj">…</span></div>
       <div class="status-row"><span class="label">Haste projector</span><span class="value" id="s-haste-pj">…</span></div>
       <div class="status-row"><span class="label">Light bloom</span><span class="value" id="s-bloom">…</span></div>
+      <div class="status-row"><span class="label">Lights</span><span class="value" id="s-lights">…</span></div>
+      <div class="status-row"><span class="label">Fossil button</span><span class="value" id="s-b-fossil">—</span></div>
+      <div class="status-row"><span class="label">Haste button</span><span class="value" id="s-b-haste">—</span></div>
+      <div class="status-row"><span class="label">Bloom button</span><span class="value" id="s-b-bloom">—</span></div>
       <div class="status-row"><span class="label">Kinect</span><span class="value" id="s-kinect">…</span></div>
       <div class="status-row"><span class="label">Uptime</span><span class="value" id="s-uptime">…</span></div>
       <div class="status-row"><span class="label">CPU temp</span><span class="value" id="s-temp">…</span></div>
@@ -629,6 +660,25 @@ async function drawStatus() {
   setBadge('s-fossil-pj', s.fossil_pj || '?');
   setBadge('s-haste-pj', s.haste_pj || '?');
   setBadge('s-bloom', s.bloom || '?');
+  setBadge('s-lights', s.lights || '?');
+
+  // Shelly BLU battery per button. < 50% warn, < 20% bad. age in minutes/hours.
+  const bats = s.batteries || {};
+  function fmtBattery(b) {
+    if (!b) return '—';
+    const pct = b.battery;
+    const ageSec = (Date.now() / 1000) - b.at;
+    const ageStr = ageSec < 3600 ? Math.round(ageSec / 60) + 'm ago'
+                 : ageSec < 86400 ? Math.round(ageSec / 3600) + 'h ago'
+                 : Math.round(ageSec / 86400) + 'd ago';
+    const cls = pct < 20 ? 'v-bad' : pct < 50 ? 'v-warn' : 'v-on';
+    return '<span class="' + cls + '">' + pct + '%</span> <span style="color:#666">(' + ageStr + ')</span>';
+  }
+  ['fossil','haste','bloom'].forEach(r => {
+    const el = document.getElementById('s-b-' + r);
+    if (el) el.innerHTML = fmtBattery(bats[r]);
+  });
+
   setVal('s-kinect', s.kinect_present === true ? 'present' : (s.kinect_present === false ? 'missing' : '?'),
          s.kinect_present === true ? 'v-on' : (s.kinect_present === false ? 'v-bad' : 'v-unknown'));
   setVal('s-uptime', s.uptime || '?');

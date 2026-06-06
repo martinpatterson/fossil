@@ -31,7 +31,17 @@ log = logging.getLogger("button-monitor")
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = SCRIPT_DIR / "pj-config.json"
 SECRETS_FILE = SCRIPT_DIR / "secrets.env"
-KASA_OUTLET = "Kasa 4"
+
+# Bloom button now toggles both exhibit lighting (Kasa 5) and the Bloom
+# fixture (Kasa 4). Staff are standing next to the lights when pressing,
+# so light first, then bloom.
+BLOOM_OUTLETS = ("Kasa 5", "Kasa 4")
+KASA_OUTLET = BLOOM_OUTLETS[-1]  # back-compat for any older references
+
+# Shelly BLU low-battery notification settings.
+LOW_BATTERY_THRESHOLD = 50  # percent
+BATTERY_STATE_PATH = "/tmp/shelly-battery.json"
+BATTERY_POLL_SEC = 60  # how often to refresh the state file
 
 # Coordination marker with pj-monitor. When set, pj-monitor will NOT
 # auto-restart fossil-app even if it sees the projector reporting ON.
@@ -167,10 +177,17 @@ async def bloom_on() -> None:
     pushover("Bloom Button", "Light Bloom ON")
     try:
         client = await _kasa()
-        await client.on(KASA_OUTLET)
     except Exception as e:
-        log.error("bloom_on failed: %s", e)
-        pushover("Bloom Button", f"Bloom ON failed: {e}")
+        log.error("bloom_on login failed: %s", e)
+        pushover("Bloom Button", f"Bloom login failed: {e}")
+        return
+    # Per-outlet error isolation: if one fails, the other still toggles.
+    for outlet in BLOOM_OUTLETS:
+        try:
+            await client.on(outlet)
+        except Exception as e:
+            log.error("bloom_on %s failed: %s", outlet, e)
+            pushover("Bloom Button", f"{outlet} ON failed: {e}")
 
 
 async def bloom_off() -> None:
@@ -178,10 +195,16 @@ async def bloom_off() -> None:
     pushover("Bloom Button", "Light Bloom OFF")
     try:
         client = await _kasa()
-        await client.off(KASA_OUTLET)
     except Exception as e:
-        log.error("bloom_off failed: %s", e)
-        pushover("Bloom Button", f"Bloom OFF failed: {e}")
+        log.error("bloom_off login failed: %s", e)
+        pushover("Bloom Button", f"Bloom login failed: {e}")
+        return
+    for outlet in BLOOM_OUTLETS:
+        try:
+            await client.off(outlet)
+        except Exception as e:
+            log.error("bloom_off %s failed: %s", outlet, e)
+            pushover("Bloom Button", f"{outlet} OFF failed: {e}")
 
 
 # --- Wiring ---
@@ -212,6 +235,63 @@ def wire(listener: ShellyBluListener, buttons: dict[str, str]) -> int:
     return count
 
 
+# --- Battery monitoring ---
+
+# mac -> battery_pct at the last time we Pushovered about it. Used so we
+# only notify once per "low-battery session" — a new Pushover only fires
+# after the device recovers above the threshold (replaced batteries).
+_battery_notified: dict[str, int] = {}
+
+
+def _maybe_battery_pushover(role: str, mac: str, batt: int) -> None:
+    if batt >= LOW_BATTERY_THRESHOLD:
+        # Healthy — clear any prior notification so a future drop re-fires.
+        _battery_notified.pop(mac, None)
+        return
+    if mac in _battery_notified:
+        return  # already notified for this low-battery session
+    pushover("Shelly BLU Battery",
+             f"{role} button low battery: {batt}% (replace CR2032)")
+    log.info("Low-battery Pushover sent for %s (%s): %d%%", role, mac, batt)
+    _battery_notified[mac] = batt
+
+
+def _publish_battery_state(snapshot: dict[str, tuple[int, float]],
+                           buttons: dict[str, str]) -> None:
+    """Write role-keyed battery JSON for the dashboard to consume."""
+    out: dict[str, dict] = {}
+    for role, mac in buttons.items():
+        m = mac.upper()
+        if m in snapshot:
+            batt, at = snapshot[m]
+            out[role] = {"battery": batt, "at": at, "mac": m}
+    try:
+        with open(BATTERY_STATE_PATH, "w") as f:
+            json.dump(out, f)
+    except OSError as e:
+        log.warning("could not write %s: %s", BATTERY_STATE_PATH, e)
+
+
+async def battery_monitor_loop(listener: ShellyBluListener,
+                               buttons: dict[str, str]) -> None:
+    """Periodically refresh /tmp/shelly-battery.json and fire low-battery
+    Pushovers. Shelly BLU only broadcasts on press, so battery updates
+    are driven by user activity — this loop's job is to publish state and
+    apply the low-battery threshold check on a steady cadence."""
+    while True:
+        try:
+            snapshot = listener.battery_snapshot()
+            _publish_battery_state(snapshot, buttons)
+            for role, mac in buttons.items():
+                m = mac.upper()
+                if m in snapshot:
+                    batt, _at = snapshot[m]
+                    _maybe_battery_pushover(role, m, batt)
+        except Exception as e:
+            log.warning("battery_monitor_loop iteration failed: %s", e)
+        await asyncio.sleep(BATTERY_POLL_SEC)
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
@@ -230,6 +310,8 @@ async def main() -> None:
     loop = asyncio.get_event_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, listener.stop)
+
+    asyncio.create_task(battery_monitor_loop(listener, buttons))
 
     await listener.run()
 

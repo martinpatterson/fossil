@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import time
 from collections import defaultdict
 from typing import Awaitable, Callable
 
@@ -27,6 +28,7 @@ log = logging.getLogger("shelly_blu")
 
 BTHOME_UUID = "0000fcd2-0000-1000-8000-00805f9b34fb"
 BTHOME_BUTTON_EVENT = 0x3A
+BTHOME_BATTERY = 0x01
 
 # Button event values per BTHome v2
 EVENTS = {
@@ -39,25 +41,29 @@ EVENTS = {
 Action = Callable[[], Awaitable[None] | None]
 
 
-def _decode_bthome(data: bytes) -> tuple[int | None, int | None]:
-    """Decode BTHome v2 service data. Returns (packet_id, event_value) or (None, None).
+def _decode_bthome(data: bytes) -> tuple[int | None, int | None, int | None]:
+    """Decode BTHome v2 service data.
+
+    Returns (packet_id, event_value, battery_pct). Any may be None if not
+    present in the frame. Shelly BLU Button1 broadcasts all three on press.
 
     packet_id increments per unique press — used for deduplication across
     multiple advertisements of the same event.
     """
     if len(data) < 2:
-        return None, None
+        return None, None, None
     if (data[0] & 0xE0) != 0x40:  # not BTHome v2
-        return None, None
+        return None, None, None
 
     packet_id: int | None = None
     event: int | None = None
+    battery: int | None = None
     i = 1
     # Walk the TLV stream. Only the object IDs we care about are fully parsed;
     # others are skipped by known payload length.
     SKIP_LEN = {
         # 1-byte payload
-        0x01: 1, 0x02: 1, 0x0F: 1, 0x2E: 1,
+        0x02: 1, 0x0F: 1, 0x2E: 1,
         # 2-byte payload
         0x03: 2, 0x04: 2, 0x05: 2, 0x09: 2, 0x0A: 2,
         0x0B: 2, 0x0C: 2, 0x0D: 2, 0x3E: 2,
@@ -74,12 +80,15 @@ def _decode_bthome(data: bytes) -> tuple[int | None, int | None]:
         if obj_id == 0x00:
             packet_id = data[i]
             i += 1
+        elif obj_id == BTHOME_BATTERY:
+            battery = data[i]
+            i += 1
         elif obj_id == BTHOME_BUTTON_EVENT:
             event = data[i]
             i += 1
         else:
             i += SKIP_LEN.get(obj_id, 1)
-    return packet_id, event
+    return packet_id, event, battery
 
 
 class ShellyBluListener:
@@ -90,6 +99,10 @@ class ShellyBluListener:
         self._handlers: dict[str, dict[str, Action]] = defaultdict(dict)
         # mac -> last seen packet id (for deduplication)
         self._last_pid: dict[str, int] = {}
+        # mac_upper -> last seen battery % (BTHome obj 0x01)
+        self._battery: dict[str, int] = {}
+        # mac_upper -> epoch when battery was last seen
+        self._battery_at: dict[str, float] = {}
         self._scanner: BleakScanner | None = None
         self._stop = asyncio.Event()
 
@@ -106,17 +119,28 @@ class ShellyBluListener:
         """Snapshot of (mac -> last seen name) for any Shelly BLU seen so far."""
         return dict(self._seen)
 
+    def battery_snapshot(self) -> dict[str, tuple[int, float]]:
+        """Returns {mac_upper: (battery_pct, epoch_seen)}."""
+        return {m: (self._battery[m], self._battery_at[m]) for m in self._battery}
+
     def _handle(self, device: BLEDevice, ad: AdvertisementData) -> None:
         sd = ad.service_data.get(BTHOME_UUID)
         if sd is None:
             return
 
-        pid, ev = _decode_bthome(sd)
+        pid, ev, batt = _decode_bthome(sd)
+
+        # Capture battery whenever it appears — fires on every press frame
+        # since Shelly BLU runs in trigger_based mode (no idle telemetry).
+        mac = device.address.upper()
+        if batt is not None:
+            self._battery[mac] = batt
+            self._battery_at[mac] = time.time()
+
         if ev is None or ev not in EVENTS:
             return
 
         # Dedup — same packet id = same physical press
-        mac = device.address.upper()
         if pid is not None and self._last_pid.get(mac) == pid:
             return
         if pid is not None:
@@ -127,8 +151,9 @@ class ShellyBluListener:
 
         handlers = self._handlers.get(mac)
         if not handlers:
-            log.info("Shelly BLU: unregistered press mac=%s name=%r event=%s pid=%s",
-                     mac, device.name, event_name, pid)
+            log.info("Shelly BLU: unregistered press mac=%s name=%r event=%s pid=%s battery=%s",
+                     mac, device.name, event_name, pid,
+                     f"{batt}%" if batt is not None else "?")
             return
 
         action = handlers.get(event_name)
@@ -136,7 +161,8 @@ class ShellyBluListener:
             log.debug("Shelly BLU: no handler for mac=%s event=%s", mac, event_name)
             return
 
-        log.info("Shelly BLU: mac=%s event=%s", mac, event_name)
+        batt_str = f" battery={batt}%" if batt is not None else ""
+        log.info("Shelly BLU: mac=%s event=%s%s", mac, event_name, batt_str)
         result = action()
         if inspect.iscoroutine(result):
             asyncio.get_event_loop().create_task(result)
