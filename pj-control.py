@@ -19,10 +19,41 @@ import asyncio
 import json
 import os
 import sys
+import time
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "pj-config.json")
 CERT_DIR = os.path.join(SCRIPT_DIR, ".pj-certs")
+
+# Debounce window for KEYCODE_POWER on the GTV-Remote fallback path.
+# Hisense's is_on lags display state by many seconds after a POWER toggle, so
+# the guard can't reliably tell "already off" from "just toggled off." Without
+# debounce, rapid OFF presses (e.g. staff double-tapping repeatedly) ping-pong
+# the display. We persist a timestamp to /tmp after each POWER send and skip
+# subsequent POWER sends within this window.
+POWER_DEBOUNCE_SEC = 10
+
+
+def _power_sent_path(name: str) -> str:
+    return os.path.join("/tmp", f"pj-{name}-power-sent")
+
+
+def _power_recently_sent(name: str) -> float | None:
+    """Returns seconds since last POWER if within debounce window, else None."""
+    try:
+        with open(_power_sent_path(name)) as f:
+            age = time.time() - float(f.read().strip())
+        return age if age < POWER_DEBOUNCE_SEC else None
+    except (FileNotFoundError, ValueError):
+        return None
+
+
+def _record_power_sent(name: str) -> None:
+    try:
+        with open(_power_sent_path(name), "w") as f:
+            f.write(str(time.time()))
+    except OSError:
+        pass
 
 
 def _local_ip_for(target_ip: str) -> str | None:
@@ -260,7 +291,14 @@ async def do_power(name, ip, turn_on, cfg=None):
             remote.send_key_command("KEYCODE_BACK", "SHORT")
             print(f"{name}: turning on (MENU+BACK)")
         else:
+            age = _power_recently_sent(name)
+            if age is not None:
+                print(f"{name}: KEYCODE_POWER sent {age:.1f}s ago — "
+                      f"skipping ({POWER_DEBOUNCE_SEC}s debounce)")
+                remote.disconnect()
+                return
             remote.send_key_command("KEYCODE_POWER", "SHORT")
+            _record_power_sent(name)
             action = "on" if turn_on else "off"
             print(f"{name}: turning {action}")
         # send_key_command is async/buffered; wait for it to flush before disconnect
