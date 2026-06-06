@@ -239,6 +239,12 @@ async def do_power(name, ip, turn_on, cfg=None):
             await remote.async_connect()
     else:
         await remote.async_connect()
+    # androidtvremote2 populates is_on via an async server message after
+    # connect — reading it immediately can return None/stale. Settle delay
+    # mirrors what _query_is_on() already does. Important when sleep uses
+    # KEYCODE_POWER (toggle), where a stale "off" guard would mis-fire and
+    # wake the projector instead.
+    await asyncio.sleep(0.5)
     is_on = remote.is_on
     if turn_on and is_on:
         print(f"{name}: already on")
