@@ -21,6 +21,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from shelly_blu import ShellyBluListener
@@ -31,6 +32,13 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = SCRIPT_DIR / "pj-config.json"
 SECRETS_FILE = SCRIPT_DIR / "secrets.env"
 KASA_OUTLET = "Kasa 4"
+
+# Coordination marker with pj-monitor. When set, pj-monitor will NOT
+# auto-restart fossil-app even if it sees the projector reporting ON.
+# Lets us stop fossil-app immediately on Fossil OFF press for instant
+# visual feedback (NUC outputs black), and prevents pj-monitor from
+# fighting that decision during the projector's is_on settling lag.
+USER_OFF_MARKER = "/tmp/fossil-app-user-off"
 
 PO_TOKEN = "avmrkpiuza87mcofkwn98s5prd2ukn"
 PO_USER = "umhhs2kiz34wq91k76a1skjrq6vft5"
@@ -77,9 +85,18 @@ def run(cmd: list[str]) -> None:
 def fossil_on() -> None:
     log.info("Fossil ON")
     pushover("Fossil Button", "Fossil ON")
-    # Only control the PJ — pj-monitor's callback starts the app when
-    # fossil-pj transitions to ON. Touching fossil-app directly here
-    # races with pj-monitor and causes the app to blink off then back.
+    # Clear any prior user-OFF marker so pj-monitor can resume normal
+    # behavior. Then explicitly start fossil-app — symmetric with
+    # fossil_off()'s explicit stop. pj-monitor only auto-starts on PJ
+    # state TRANSITIONS, so if the projector is already ON (toggle
+    # bug, retry press, accidental ON) it would never fire. Starting
+    # here is idempotent.
+    try:
+        os.remove(USER_OFF_MARKER)
+    except FileNotFoundError:
+        pass
+    subprocess.run(["sudo", "systemctl", "start", "fossil-app.service"],
+                   capture_output=True, timeout=5)
     run([
         sys.executable, str(SCRIPT_DIR / "pj-control.py"),
         "fossil-pj", "on",
@@ -89,8 +106,19 @@ def fossil_on() -> None:
 def fossil_off() -> None:
     log.info("Fossil OFF")
     pushover("Fossil Button", "Fossil OFF")
-    # See fossil_on(): only control the PJ. pj-monitor stops fossil-app
-    # via its OFF callback when fossil-pj transitions to OFF.
+    # Write the marker BEFORE stopping the service so pj-monitor's
+    # poll (15 s) can't race us and restart the app between stop and
+    # marker-write.
+    try:
+        with open(USER_OFF_MARKER, "w") as f:
+            f.write(str(time.time()))
+    except OSError as e:
+        log.warning("could not write %s: %s", USER_OFF_MARKER, e)
+    # Stop fossil-app immediately for instant user-visible feedback
+    # (NUC outputs black). Decoupled from the projector's slow
+    # is_on lag so staff don't perceive the OFF as a no-op.
+    subprocess.run(["sudo", "systemctl", "stop", "fossil-app.service"],
+                   capture_output=True, timeout=5)
     run([
         sys.executable, str(SCRIPT_DIR / "pj-control.py"),
         "fossil-pj", "off",

@@ -15,11 +15,21 @@ import os
 import signal
 import subprocess
 import sys
+import time
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "pj-config.json")
 CERT_DIR = os.path.join(SCRIPT_DIR, ".pj-certs")
 POLL_INTERVAL = 15  # seconds
+
+# Coordination marker with button-monitor. When the file exists with a
+# timestamp newer than USER_OFF_TTL ago, the user pressed Fossil OFF and
+# fossil-app was stopped immediately for visual feedback. Suppress all
+# auto-restart paths until the marker expires or is cleared on a Fossil
+# ON press. TTL > observed worst-case is_on settle lag (~31s) so any
+# reconnect during shutdown that sees lagged is_on=True does NOT restart.
+USER_OFF_MARKER = "/tmp/fossil-app-user-off"
+USER_OFF_TTL = 90  # seconds
 
 # Which projector to monitor (app lifecycle follows this projector)
 MONITOR_PJ = "fossil-pj"
@@ -92,8 +102,27 @@ def service_stop():
     )
 
 
+def _user_off_active() -> bool:
+    """True if a recent Fossil OFF press marked user intent to keep the
+    app stopped. Suppresses auto-restart paths during the projector's
+    is_on settling lag."""
+    try:
+        with open(USER_OFF_MARKER) as f:
+            return time.time() - float(f.read().strip()) < USER_OFF_TTL
+    except (FileNotFoundError, ValueError):
+        return False
+
+
 def ensure_running():
-    """App should be running — start it if it's not."""
+    """App should be running — start it if it's not.
+
+    Respects the user-OFF marker: if the user pressed Fossil OFF within
+    USER_OFF_TTL seconds, do NOT start the app even if the projector
+    still reports ON. This prevents pj-monitor from fighting the user's
+    intent during the projector's is_on settling lag.
+    """
+    if _user_off_active():
+        return False
     if not service_active():
         service_start()
         return True
