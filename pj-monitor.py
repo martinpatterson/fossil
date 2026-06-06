@@ -120,8 +120,11 @@ def ensure_running():
     USER_OFF_TTL seconds, do NOT start the app even if the projector
     still reports ON. This prevents pj-monitor from fighting the user's
     intent during the projector's is_on settling lag.
+
+    Returns True iff this call actually started the service.
     """
     if _user_off_active():
+        print("ensure_running: skipped (user-OFF marker active)", flush=True)
         return False
     if not service_active():
         service_start()
@@ -158,9 +161,14 @@ async def monitor():
         if input_id:
             adb_select_input(ip, input_id)
 
-    # App always starts running
-    ensure_running()
-    print("App started (default state)", flush=True)
+    # App always starts running — unless a recent user-OFF marker is in
+    # effect (e.g. the user pressed Fossil OFF just before pj-monitor
+    # restarted, and we'd otherwise re-start the app against their intent).
+    if _user_off_active():
+        print("Init: skipping default app start — user-OFF marker active", flush=True)
+    else:
+        ensure_running()
+        print("App started (default state)", flush=True)
 
     last_confirmed_off = False
     notified_unreachable = False
@@ -171,8 +179,11 @@ async def monitor():
         nonlocal last_confirmed_off, notified_unreachable
         if is_on:
             if last_confirmed_off:
-                print(f"{MONITOR_PJ}: ON (callback) — starting app", flush=True)
-                pushover("Fossil PJ Monitor", f"{MONITOR_PJ} ON — app started")
+                if _user_off_active():
+                    print(f"{MONITOR_PJ}: ON (callback) — start suppressed (user-OFF active)", flush=True)
+                else:
+                    print(f"{MONITOR_PJ}: ON (callback) — starting app", flush=True)
+                    pushover("Fossil PJ Monitor", f"{MONITOR_PJ} ON — app started")
             last_confirmed_off = False
             notified_unreachable = False
             pj_is_on()
@@ -197,8 +208,11 @@ async def monitor():
                     power = remote.is_on
                     if power is True:
                         if last_confirmed_off:
-                            print(f"{MONITOR_PJ}: ON — starting app", flush=True)
-                            pushover("Fossil PJ Monitor", f"{MONITOR_PJ} ON — app started")
+                            if _user_off_active():
+                                print(f"{MONITOR_PJ}: ON — start suppressed (user-OFF active)", flush=True)
+                            else:
+                                print(f"{MONITOR_PJ}: ON — starting app", flush=True)
+                                pushover("Fossil PJ Monitor", f"{MONITOR_PJ} ON — app started")
                         last_confirmed_off = False
                         pj_is_on()
                     elif power is False:
