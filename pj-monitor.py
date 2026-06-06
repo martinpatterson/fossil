@@ -151,14 +151,20 @@ async def monitor():
 
     ip = config[MONITOR_PJ]["ip"]
     input_id = config[MONITOR_PJ].get("hdmi_input_id")
+    adb_disabled = bool(config[MONITOR_PJ].get("adb_disabled"))
     certfile = os.path.join(CERT_DIR, f"{MONITOR_PJ}-cert.pem")
     keyfile = os.path.join(CERT_DIR, f"{MONITOR_PJ}-key.pem")
-    print(f"Monitoring {MONITOR_PJ} ({ip}) every {POLL_INTERVAL}s", flush=True)
+    print(f"Monitoring {MONITOR_PJ} ({ip}) every {POLL_INTERVAL}s"
+          f"{' (adb_disabled)' if adb_disabled else ''}", flush=True)
 
     def pj_is_on():
-        """PJ confirmed on: ensure app running and force input to NUC."""
+        """PJ confirmed on: ensure app running and (when ADB is available)
+        force input to NUC. When adb_disabled is set, skip the ADB step
+        entirely — the auth dialog is hung up and `adb shell` blocks on
+        the timeout, visibly slowing PJ wake. Hisense self-selects the
+        correct HDMI input on wake anyway, so skipping is safe."""
         ensure_running()
-        if input_id:
+        if input_id and not adb_disabled:
             adb_select_input(ip, input_id)
 
     # App always starts running — unless a recent user-OFF marker is in
